@@ -52,3 +52,11 @@ All with the interconnect modules loaded (DISP_CC readable):
 * Next ideas: the state Android's normal boot leaves (needs root in Android), XPU/TZ protection of
   the CAMSS/VENUS config spaces in recovery mode, an AOP/QMP request, or a different boot path.
 | CX + MX + MMCX all at 256 (R197 camvote) | CAM_CC read still stalls |
+
+## Persistent journal removed (stability regression)
+
+* With `Storage=persistent` (200 MB) every boot stalled ~1.5–3 min after start (SSH gone, systemd could
+  not pet the watchdog → reset), also the unmodified R191 boot. The journal had grown to 203 MB on the
+  microSD root and was rotating constantly.
+* Back to the volatile journal (old files kept in /root/journal-r193): two boots stable for >10 min.
+* For debugging a hang, enable it temporarily only.
