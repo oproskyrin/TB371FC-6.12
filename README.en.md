@@ -39,6 +39,8 @@ tablet's second recovery slot (`recovery_b`).
 | CPU frequency scaling, thermal throttling | ✅ |
 | Battery: charge level, capacity, cycles (MM8013 gauge), KDE indicator | ✅ |
 | zram swap (3.5 GB compressed RAM) | ✅ |
+| Desktop ~11 s after Linux starts; Chromium sandbox (USER_NS + PID_NS + seccomp) | ✅ |
+| USB-C: USB 2.0 device mode only (PC link); host mode (flash drives, hubs), USB 3 and video output not yet | ❌ |
 | Chromium on the GPU (WebGL, rasterization); 1080p video smooth — 1.5–3 % dropped frames (26 % without GPU) | ✅ |
 | Hardware video decoding (Venus) | ❌ |
 | Adreno 650 GPU (freedreno, OpenGL 4.6) — KWin hardware compositing | ✅ |
@@ -96,7 +98,7 @@ read-only image + RAM overlay (changes are lost on reboot).
 | `docs/` | Older port notes (panel, audio, touch, recovery, hardware matrix…) |
 
 The project grew release by release (R1 … R183); file names carry the release number.
-The current production release is **R185** (battery + GPU acceleration).
+The current production release is **R188** (battery, GPU acceleration, kernel with USER_NS/PID_NS).
 
 ## Installation (overview)
 
@@ -148,11 +150,12 @@ adjust them to your machine.
 ```bash
 bash scripts/package-r179-autoboot.sh                 # Image + initramfs.cpio.gz (headless GPU)
 bash scripts/build-r185-gpu-dt.sh                     # board.dtb: battery + GPU
-python3 scripts/package-r185-autoboot-recovery.py     # recovery_b image with the autoboot helper
+bash scripts/build-r187-userns-kernel.sh              # Image: USER_NS + PID_NS
+python3 scripts/package-r188-autoboot-recovery.py     # recovery_b image with the autoboot helper
 ```
 
-Copy the payload to `p1:/tb371fc-linux/autoboot-6.12-r185/` together with an empty
-`ENABLE` file (or let `scripts/r185-sd-install-419.sh` do it from the console).
+Copy the payload to `p1:/tb371fc-linux/autoboot-6.12-r188/` together with an empty
+`ENABLE` file (or let `scripts/r188-sd-install-419.sh` do it from the console).
 Put the files from `scripts/r184-config/` on the root filesystem (zram, battery, UPower, GPU — see the comments inside).
 
 **Wi-Fi:** your own network is provisioned at build time from a `wpa_supplicant`-style

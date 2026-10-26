@@ -6,8 +6,8 @@ ConditionPathExists=/proc/device-tree/soc@0/geniqup@9c0000/i2c@98c000/fuel-gauge
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# the R17x kernels have CONFIG_FUEL_GAUGE_MM8013 off; the module is built by prepare-r184-battery-dt.sh
-ExecStart=/bin/sh -c 'grep -q "^mm8013 " /proc/modules || insmod /usr/local/lib/tb371fc/mm8013.ko'
+# R184-R186 kernels: CONFIG_FUEL_GAUGE_MM8013 off, module from prepare-r184-battery-dt.sh; R187+: built in
+ExecStart=/bin/sh -c '[ -d /sys/bus/i2c/drivers/mm8013 ] || insmod /usr/local/lib/tb371fc/mm8013.ko'
 
 [Install]
 WantedBy=multi-user.target
