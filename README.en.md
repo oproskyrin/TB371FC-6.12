@@ -90,7 +90,6 @@ read-only image + RAM overlay (changes are lost on reboot).
 | `scripts/r1xx-config/` | Systemd units/scripts baked into the initramfs (Wi-Fi, BT, desktop defaults…) |
 | `scripts/*.ps1` | Windows-side tools: flashing, console hold, reboot, release cycle |
 | `initramfs/`, `rootfs/` | Initramfs and root filesystem pieces |
-| `opus/` | Engineering reports for every release (R1xx) — the most detailed documentation |
 | `docs/` | Older port notes (panel, audio, touch, recovery, hardware matrix…) |
 
 The project grew release by release (R1 … R183); file names carry the release number.
