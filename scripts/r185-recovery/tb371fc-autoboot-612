@@ -1,0 +1,84 @@
+#!/bin/sh
+# R185 first-stage autoboot: 4.19 console -> Linux 6.12 R185 (R179 headless GPU + battery DTB, GPU compositing). PC-attached: 60 s window and remote hold file.
+# Runs only if boot-arch-development-rootfs copied the payload from
+# microSD tb371fc-linux/autoboot-6.12-r185/ (needs the ENABLE file there).
+# Any button press or screen touch during the countdown cancels it.
+set -u
+bb=/run/tb371fc-rescue/busybox
+kexec=/run/tb371fc-rescue/kexec
+dir=/run/tb371fc-autoboot
+ev=$dir/events
+log=/run/tb371fc-autoboot.log
+
+say() {
+	printf '%s\n' "$*"
+	[ -c /dev/tty0 ] && printf '%s\n' "$*" >/dev/tty0 2>/dev/null
+	return 0
+}
+fail() { say "TB371FC AUTOBOOT: $*; staying in the 4.19 console."; exit 1; }
+hash_ok() { [ "$("$bb" sha256sum "$dir/$1" 2>/dev/null | "$bb" awk '{print $1}')" = "$2" ]; }
+
+[ -d "$dir" ] || exit 0
+hash_ok Image 3f6fb471992253a6d9c456353cd13517b8fccb0caaa0f2f4a12ab4d249f212ee || fail 'Image hash mismatch'
+hash_ok board.dtb a02916b971a9930c57da05485ef8e1ea63e0e669832286d11e17d8b0603cb79d || fail 'DTB hash mismatch'
+hash_ok initramfs.cpio.gz d0c2418e252e75bcbc46481988dce0199f55e2be4ed7ef3a1b48a88fb19b86b1 || fail 'initramfs hash mismatch'
+[ -x "$kexec" ] && [ -x /run/tb371fc-rescue/execute-linux-6.12-r38 ] || fail 'kexec helpers missing'
+
+# Let the console settle, then ignore input devices that are noisy by themselves.
+"$bb" sleep 3
+mkdir -p "$ev"
+noisy=
+for e in /dev/input/event*; do
+	[ -c "$e" ] || continue
+	n=${e##*/}
+	"$bb" timeout 1 "$bb" cat "$e" >"$ev/pre-$n" 2>/dev/null
+	[ -s "$ev/pre-$n" ] && noisy="$noisy $n"
+done
+pids=
+for e in /dev/input/event*; do
+	[ -c "$e" ] || continue
+	n=${e##*/}
+	case " $noisy " in *" $n "*) continue ;; esac
+	"$bb" cat "$e" >"$ev/$n" 2>/dev/null &
+	pids="$pids $!"
+done
+
+hold=/run/tb371fc-autoboot-hold
+touched() {
+	[ -e "$hold" ] && return 0
+	for f in "$ev"/event*; do [ -s "$f" ] && return 0; done
+	return 1
+}
+# R171: when a PC is attached (USB gadget enumerated), wait 60 s so the development PC can ask
+# the console to stay by creating $hold over the serial bridge. Without a PC: 7 s as before.
+secs=7
+for u in /sys/class/udc/*/state; do [ "$(cat "$u" 2>/dev/null)" = configured ] && secs=60; done
+say ''
+say '=================================================================='
+say " TB371FC AUTOBOOT: Linux 6.12 + KDE desktop starts in $secs seconds."
+say ' Press any button or touch the screen to STAY in the 4.19 console.'
+say '=================================================================='
+cancel=0
+n=$secs
+while [ "$n" -gt 0 ]; do
+	{ [ "$n" -le 7 ] || [ $((n % 10)) = 0 ]; } && say "   $n ..."
+	"$bb" sleep 1
+	if touched; then cancel=1; break; fi
+	n=$((n - 1))
+done
+for p in $pids; do kill "$p" 2>/dev/null; done
+if [ "$cancel" = 1 ]; then
+	echo cancelled >"$dir/state"
+	if [ -e "$hold" ]; then say 'TB371FC AUTOBOOT: hold requested by the PC; the 4.19 console stays.'
+	else say 'TB371FC AUTOBOOT: cancelled by user input; the 4.19 console stays.'; fi
+	exit 0
+fi
+
+cmdline='console=tty0 fbcon=font:TER16x32 earlycon=qcom_geni,0x988000 keep_bootcon ignore_loglevel loglevel=8 log_buf_len=8M rdinit=/init root=/dev/ram0 rw fw_devlink=off clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=0 initcall_debug printk.time=1 swiotlb=2048 reset_devices rodata=on systemd.unit=multi-user.target systemd.show_status=1 pci=realloc'
+"$kexec" -u 2>/dev/null || true
+"$kexec" -c -l "$dir/Image" --dtb="$dir/board.dtb" --initrd="$dir/initramfs.cpio.gz" --append="$cmdline" || fail 'kexec load failed'
+[ "$(cat /sys/kernel/kexec_loaded)" = 1 ] || fail 'kexec_loaded is not 1'
+echo loaded >/run/tb371fc-linux612-r38.state
+echo starting >"$dir/state"
+say 'TB371FC AUTOBOOT: payload verified; starting Linux 6.12 now.'
+exec /run/tb371fc-rescue/execute-linux-6.12-r38

@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import tempfile
 
-project = Path("$(cd "$(dirname "$0")/.." && pwd)")
+project = Path(__file__).resolve().parent.parent
 builds = Path('/mnt/d/TB371FC-builds')
 source = builds/'linux-6.12.30-tb371fc-r121-panic-gate-20261023/tb371fc-r121-recovery.img'
 output = builds/'linux-6.12.30-tb371fc-r176-autoboot-20261025'

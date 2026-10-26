@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 set -euo pipefail
 
-PROJECT=<repo>
+PROJECT="$(cd "$(dirname "$0")/.." && pwd)"
 V47_ROOT=/mnt/d/TB371FC-builds/arch-development-loader-v47-community-parallel-sspp
 COMMUNITY_KERNEL=/root/tb371fc-desktop-working-out/arch/arm64/boot/Image
 V45_RAMDISK=/mnt/d/TB371FC-builds/arch-development-loader-v45-stock-kernel-logdisk/tb371fc-v45-stock-kernel-logdisk.cpio.gz

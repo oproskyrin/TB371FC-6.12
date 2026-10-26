@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
   TB371FC / Opus phase 4.
   Гипотеза: CPU-записи KWin в DRM dumb buffer не сбрасываются из кэша,
@@ -12,8 +12,8 @@ param(
     [string]$TabletIp     = '',
     [string]$Subnet       = '192.168.1',
     [int]   $Port         = 2222,
-    [string]$IdentityFile = '<repo>\artifacts\tb371fc-development-ssh\id_ed25519',
-    [string]$ProjectRoot  = '<repo>',
+    [string]$IdentityFile = (Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts\tb371fc-development-ssh\id_ed25519'),
+    [string]$ProjectRoot  = (Split-Path -Parent $PSScriptRoot),
     [int]   $BootWait     = 360
 )
 $ErrorActionPreference = 'Continue'

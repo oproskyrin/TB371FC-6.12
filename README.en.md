@@ -37,10 +37,11 @@ tablet's second recovery slot (`recovery_b`).
 | Persistent root filesystem on microSD partition 2 (ext4) | ✅ |
 | microSD: DMA, UHS SDR50 — ~46 MB/s read, ~32 MB/s write | ✅ |
 | CPU frequency scaling, thermal throttling | ✅ |
-| Adreno 650 GPU (freedreno, GLES 3.2) — headless only | ⚠️ |
+| Battery: charge level, capacity, cycles (MM8013 gauge), KDE indicator | ✅ |
+| zram swap (3.5 GB compressed RAM) | ✅ |
+| Adreno 650 GPU (freedreno, OpenGL 4.6) — KWin hardware compositing | ✅ |
 | Display: framebuffer handed over from the bootloader (simpledrm, 60 Hz) | ⚠️ |
 | Native DPU/DSI display driver, 120 Hz | ❌ in progress (left half correct, right half noise) |
-| GPU-accelerated compositing in KWin | ❌ (QPainter/software rendering) |
 | microSD SDR104 writes | ❌ (reads work; needs BH201 output tuning) |
 | Cameras, sleep/suspend, dock keyboard pogo pins | ❌ / not tested |
 
@@ -93,7 +94,7 @@ read-only image + RAM overlay (changes are lost on reboot).
 | `docs/` | Older port notes (panel, audio, touch, recovery, hardware matrix…) |
 
 The project grew release by release (R1 … R183); file names carry the release number.
-The current production release is **R178/R179**.
+The current production release is **R185** (battery + GPU acceleration).
 
 ## Installation (overview)
 
@@ -143,12 +144,14 @@ adjust them to your machine.
 ### 4. Build the payload and the recovery image
 
 ```bash
-bash scripts/package-r179-autoboot.sh                 # Image + board.dtb + initramfs.cpio.gz
-python3 scripts/package-r178-autoboot-recovery.py     # recovery_b image with the autoboot helper
+bash scripts/package-r179-autoboot.sh                 # Image + initramfs.cpio.gz (headless GPU)
+bash scripts/build-r185-gpu-dt.sh                     # board.dtb: battery + GPU
+python3 scripts/package-r185-autoboot-recovery.py     # recovery_b image with the autoboot helper
 ```
 
-Copy the payload to `p1:/tb371fc-linux/autoboot-6.12-r179/` together with an empty
-`ENABLE` file (or let `scripts/r178-sd-install-419.sh` do it from the console).
+Copy the payload to `p1:/tb371fc-linux/autoboot-6.12-r185/` together with an empty
+`ENABLE` file (or let `scripts/r185-sd-install-419.sh` do it from the console).
+Put the files from `scripts/r184-config/` on the root filesystem (zram, battery, UPower, GPU — see the comments inside).
 
 **Wi-Fi:** your own network is provisioned at build time from a `wpa_supplicant`-style
 file that contains only the **PSK hash** (`wpa_passphrase` output, plaintext line

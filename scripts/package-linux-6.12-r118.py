@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import re
 
-project = pathlib.Path("$(cd "$(dirname "$0")/.." && pwd)")
+project = pathlib.Path(__file__).resolve().parent.parent
 pkg = pathlib.Path('/mnt/d/TB371FC-builds/linux-6.12.30-tb371fc-r118-pinctrl')
 base = pathlib.Path('/mnt/d/TB371FC-builds/linux-6.12.30-tb371fc-r108-headless-microsd-redriver-hog-poll-dtb')
 dtb = pkg / 'board.dtb'

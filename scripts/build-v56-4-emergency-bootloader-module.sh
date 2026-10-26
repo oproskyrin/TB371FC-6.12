@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 set -euo pipefail
 
-PROJECT=${PROJECT:-<repo>}
+PROJECT=${PROJECT:-$(cd "$(dirname "$0")/.." && pwd)}
 export PROJECT BUILD_VERSION=56.4 BUILD_SLUG=56-4
 export SOURCE=/root/tb371fc-desktop-v56-4-kexec-drm-shutdown-src
 export OUTPUT=/root/tb371fc-desktop-v56-4-kexec-drm-shutdown-out

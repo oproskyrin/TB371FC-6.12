@@ -3,7 +3,7 @@
 # Build V56.8 as a strict regression test: keep the V56.5 display clock path.
 set -euo pipefail
 
-PROJECT=${PROJECT:-<repo>}
+PROJECT=${PROJECT:-$(cd "$(dirname "$0")/.." && pwd)}
 export PROJECT
 export BUILD_VERSION=56.8
 export BUILD_SLUG=56-8

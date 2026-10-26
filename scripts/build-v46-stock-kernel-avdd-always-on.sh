@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 set -euo pipefail
 
-PROJECT=<repo>
+PROJECT="$(cd "$(dirname "$0")/.." && pwd)"
 V45_RAMDISK=/mnt/d/TB371FC-builds/arch-development-loader-v45-stock-kernel-logdisk/tb371fc-v45-stock-kernel-logdisk.cpio.gz
 STOCK_PARTS=/mnt/d/TB371FC-builds/stock-recovery-unpacked
 STOCK_RECOVERY="$PROJECT/artifacts/device-backup/lun0-recovery_b.bin"

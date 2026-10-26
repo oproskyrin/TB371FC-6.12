@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 set -euo pipefail
 
-PROJECT=${PROJECT:-<repo>}
+PROJECT=${PROJECT:-$(cd "$(dirname "$0")/.." && pwd)}
 export PROJECT
 export BUILD_VERSION=56.2
 export BUILD_SLUG=56-2

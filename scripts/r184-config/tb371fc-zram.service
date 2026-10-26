@@ -1,0 +1,14 @@
+[Unit]
+Description=TB371FC compressed swap in RAM (zram, half of the memory)
+DefaultDependencies=no
+Before=swap.target
+ConditionPathExists=/sys/class/zram-control
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/tb371fc-zram.sh
+ExecStop=/bin/sh -c 'swapoff /dev/zram0; echo 1 > /sys/block/zram0/reset'
+
+[Install]
+WantedBy=swap.target

@@ -3,7 +3,7 @@
 # Package V56.5 with the complete kexec handoff toolset.
 set -euo pipefail
 
-PROJECT=<repo>
+PROJECT="$(cd "$(dirname "$0")/.." && pwd)"
 export BUILD_VERSION=56.5
 export BUILD_SLUG=56-5
 export BUILD_RELEASE=/root/tb371fc-desktop-v56-5-kexec-cpu-hotplug-release

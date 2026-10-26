@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-project="<repo>"
+project="$(cd "$(dirname "$0")/.." && pwd)"
 v565=/mnt/d/TB371FC-builds/arch-development-loader-v56-5-r2-community-simplefb-qca6390-kde-kexec-cpu-hotplug-safe
 out=/mnt/d/TB371FC-builds/linux-6.12.30-tb371fc-v56.6-controlled-kexec-r69-transport-r2
 export RECOVERY_DTBO="$v565/recovery-dtbo-v56-5.img"

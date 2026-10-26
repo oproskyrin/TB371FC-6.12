@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 set -euo pipefail
 
-PROJECT=${PROJECT:-<repo>}
+PROJECT=${PROJECT:-$(cd "$(dirname "$0")/.." && pwd)}
 SOURCE=${SOURCE:-/root/tb371fc-desktop-v56-5-kexec-cpu-hotplug-src}
 OUTPUT=${OUTPUT:-/root/tb371fc-desktop-v56-5-kexec-cpu-hotplug-out}
 RELEASE=${RELEASE:-/root/tb371fc-v56-5-retained-stage-reader-release}

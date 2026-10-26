@@ -3,7 +3,7 @@
 # Package the V56.3 kexec bridge while keeping V56.2 as the rollback image.
 set -euo pipefail
 
-PROJECT=<repo>
+PROJECT="$(cd "$(dirname "$0")/.." && pwd)"
 export BUILD_VERSION=56.3
 export BUILD_SLUG=56-3
 export BUILD_RELEASE=/root/tb371fc-desktop-v56-3-kexec-release

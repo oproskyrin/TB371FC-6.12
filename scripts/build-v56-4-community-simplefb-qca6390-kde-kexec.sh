@@ -3,7 +3,7 @@
 # Package V56.4 with the complete kexec handoff toolset.
 set -euo pipefail
 
-PROJECT=<repo>
+PROJECT="$(cd "$(dirname "$0")/.." && pwd)"
 export BUILD_VERSION=56.4
 export BUILD_SLUG=56-4
 export BUILD_RELEASE=/root/tb371fc-desktop-v56-4-kexec-drm-shutdown-release

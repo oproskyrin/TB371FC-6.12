@@ -3,7 +3,7 @@
 # Package V56.8 without modifying the V56.7 or V56.5 rollback images.
 set -euo pipefail
 
-PROJECT=<repo>
+PROJECT="$(cd "$(dirname "$0")/.." && pwd)"
 export BUILD_VERSION=56.8
 export BUILD_SLUG=56-8
 export BUILD_RELEASE=/root/tb371fc-desktop-v56-8-native-clock-release

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 set -euo pipefail
 
-PROJECT=<repo>
+PROJECT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_VERSION=${BUILD_VERSION:-56.1}
 BUILD_SLUG=${BUILD_SLUG:-${BUILD_VERSION//./-}}
 BUILD_RELEASE=${BUILD_RELEASE:-/root/tb371fc-desktop-v${BUILD_SLUG}-kde-wlan-safe-release}

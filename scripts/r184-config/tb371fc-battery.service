@@ -1,0 +1,13 @@
+[Unit]
+Description=TB371FC battery fuel gauge (Mitsumi MM8013 on i2c3)
+Before=upower.service
+ConditionPathExists=/proc/device-tree/soc@0/geniqup@9c0000/i2c@98c000/fuel-gauge@55
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# the R17x kernels have CONFIG_FUEL_GAUGE_MM8013 off; the module is built by prepare-r184-battery-dt.sh
+ExecStart=/bin/sh -c 'grep -q "^mm8013 " /proc/modules || insmod /usr/local/lib/tb371fc/mm8013.ko'
+
+[Install]
+WantedBy=multi-user.target

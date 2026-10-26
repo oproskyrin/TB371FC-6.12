@@ -3,7 +3,7 @@
 # Build the V56.5 kexec launcher; V56.3 r2 remains immutable rollback.
 set -euo pipefail
 
-PROJECT=${PROJECT:-<repo>}
+PROJECT=${PROJECT:-$(cd "$(dirname "$0")/.." && pwd)}
 export PROJECT
 export BUILD_VERSION=56.5
 export BUILD_SLUG=56-5

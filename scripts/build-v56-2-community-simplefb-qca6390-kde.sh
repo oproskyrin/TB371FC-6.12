@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 set -euo pipefail
 
-PROJECT=<repo>
+PROJECT="$(cd "$(dirname "$0")/.." && pwd)"
 export BUILD_VERSION=56.2
 export BUILD_SLUG=56-2
 export BUILD_RELEASE=/root/tb371fc-desktop-v56-2-kde-wlan-fhandle-release

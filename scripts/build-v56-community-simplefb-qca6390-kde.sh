@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 set -euo pipefail
 
-PROJECT=<repo>
+PROJECT="$(cd "$(dirname "$0")/.." && pwd)"
 V56_RELEASE=/root/tb371fc-desktop-v56-kde-wlan-release
 COMMUNITY_KERNEL=$V56_RELEASE/Image
 WLAN_MODULE=$V56_RELEASE/wlan.ko

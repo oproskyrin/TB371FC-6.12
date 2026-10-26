@@ -3,7 +3,7 @@
 # V56.3-r3: preserve the proven bridge kernel and add QCA6390 HCI UART support.
 set -euo pipefail
 
-PROJECT=${PROJECT:-<repo>}
+PROJECT=${PROJECT:-$(cd "$(dirname "$0")/.." && pwd)}
 export PROJECT
 export BUILD_VERSION=56.3
 export BUILD_SLUG=56-3-r3

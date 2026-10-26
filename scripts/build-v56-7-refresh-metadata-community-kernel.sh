@@ -3,7 +3,7 @@
 # Build V56.7 with corrected DRM refresh metadata; V56.5 stays immutable.
 set -euo pipefail
 
-PROJECT=${PROJECT:-<repo>}
+PROJECT=${PROJECT:-$(cd "$(dirname "$0")/.." && pwd)}
 export PROJECT
 export BUILD_VERSION=56.7
 export BUILD_SLUG=56-7

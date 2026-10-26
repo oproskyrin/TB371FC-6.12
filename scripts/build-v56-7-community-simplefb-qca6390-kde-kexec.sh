@@ -3,7 +3,7 @@
 # Package V56.7 while preserving V56.5 as the rollback image.
 set -euo pipefail
 
-PROJECT=<repo>
+PROJECT="$(cd "$(dirname "$0")/.." && pwd)"
 export BUILD_VERSION=56.7
 export BUILD_SLUG=56-7
 export BUILD_RELEASE=/root/tb371fc-desktop-v56-7-refresh-metadata-release

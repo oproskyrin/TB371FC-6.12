@@ -3,7 +3,7 @@
 # Build a V56.x kernel in isolated source/output trees. V55 remains immutable.
 set -euo pipefail
 
-PROJECT=${PROJECT:-<repo>}
+PROJECT=${PROJECT:-$(cd "$(dirname "$0")/.." && pwd)}
 BUILD_VERSION=${BUILD_VERSION:-56.1}
 BUILD_SLUG=${BUILD_SLUG:-${BUILD_VERSION//./-}}
 ENABLE_FHANDLE=${ENABLE_FHANDLE:-0}

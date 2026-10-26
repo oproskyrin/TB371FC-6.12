@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import tempfile
 
-project = Path("$(cd "$(dirname "$0")/.." && pwd)")
+project = Path(__file__).resolve().parent.parent
 builds = Path('/mnt/d/TB371FC-builds')
 output = builds / 'linux-6.12.30-tb371fc-r120-handoff-20261001'
 unpack = '/root/mkbootimg/unpack_bootimg.py'

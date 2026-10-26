@@ -3,7 +3,7 @@
 # Build a signed, one-shot direct reboot module for an exact V56.x kernel.
 set -euo pipefail
 
-PROJECT=${PROJECT:-<repo>}
+PROJECT=${PROJECT:-$(cd "$(dirname "$0")/.." && pwd)}
 BUILD_VERSION=${BUILD_VERSION:-56.3}
 BUILD_SLUG=${BUILD_SLUG:-${BUILD_VERSION//./-}}
 SOURCE=${SOURCE:-/root/tb371fc-desktop-v${BUILD_SLUG}-kexec-src}

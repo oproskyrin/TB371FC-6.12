@@ -3,7 +3,7 @@
 # Build the V56 downstream kernel without modifying the proven V55 source/output.
 set -euo pipefail
 
-PROJECT=${PROJECT:-<repo>}
+PROJECT=${PROJECT:-$(cd "$(dirname "$0")/.." && pwd)}
 BASE_SOURCE=${BASE_SOURCE:-/root/tb371fc-desktop-working-kernel}
 BASE_OUTPUT=${BASE_OUTPUT:-/root/tb371fc-desktop-working-out-v49}
 VENDOR_SOURCE=${VENDOR_SOURCE:-/root/tb371fc-lenovo-4.19}

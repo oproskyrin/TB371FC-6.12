@@ -3,7 +3,7 @@
 # Build the V56.3 bridge kernel. V56.2 remains the immutable rollback image.
 set -euo pipefail
 
-PROJECT=${PROJECT:-<repo>}
+PROJECT=${PROJECT:-$(cd "$(dirname "$0")/.." && pwd)}
 export PROJECT
 export BUILD_VERSION=56.3
 export BUILD_SLUG=56-3

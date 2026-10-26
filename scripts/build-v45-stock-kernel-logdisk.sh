@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 set -euo pipefail
 
-PROJECT=<repo>
+PROJECT="$(cd "$(dirname "$0")/.." && pwd)"
 V4_RAMDISK=/mnt/d/TB371FC-builds/arch-development-loader-v4/tb371fc-arch-development-loader-v4.cpio.gz
 MODERN_RAMDISK=/root/v40-frame-boundary-ramdisk.cpio.gz
 STOCK_PARTS=/mnt/d/TB371FC-builds/stock-recovery-unpacked

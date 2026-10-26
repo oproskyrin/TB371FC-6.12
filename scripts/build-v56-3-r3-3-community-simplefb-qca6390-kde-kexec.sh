@@ -3,7 +3,7 @@
 # V56.3-r3.3: reject obsolete persistent service overrides before KDE starts.
 set -euo pipefail
 
-PROJECT=<repo>
+PROJECT="$(cd "$(dirname "$0")/.." && pwd)"
 export BUILD_VERSION=56.3
 export BUILD_SLUG=56-3-r3-3
 export BUILD_RELEASE=/root/tb371fc-desktop-v56-3-r3-release

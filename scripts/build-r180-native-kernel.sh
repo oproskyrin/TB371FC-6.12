@@ -15,7 +15,7 @@ for f in $(cd "$r146" && ls drivers/gpu/drm/msm/disp/dpu1/*.[ch] drivers/gpu/drm
 done
 grep -q "tb371fc,headless-gpu" "$src/drivers/gpu/drm/msm/msm_drv.c"
 # R180 fixes on top of the R146 files
-grep -q Hardent "$src/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c" || python3 "<repo>/scripts/r180-dsc-initial-lines.py" "$src/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c"
+grep -q Hardent "$src/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c" || python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/r180-dsc-initial-lines.py" "$src/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c"
 grep -q "tb371fc,io-pads-1v8" "$src/drivers/mmc/host/sdhci-msm.c"
 make -C "$src" O="$out" ARCH=arm64 LLVM=-18 -j"$(nproc)" Image > "$pkg/build.log" 2>&1 || { grep -E "error" "$pkg/build.log" | head; tail -20 "$pkg/build.log"; exit 1; }
 cat "$out/include/config/kernel.release"
@@ -31,7 +31,7 @@ ccflags-y := -I$(srctree)/%s %s
   cp "$m/$1.ko" "$pkg/"
 }
 ext dispcc-sm8250 drivers/clk/qcom/dispcc-sm8250.c drivers/clk/qcom
-f=$src/drivers/gpu/drm/panel/panel-novatek-nt36523.c; [ -f $f.r146 ] || cp $f $f.r146; cp $f.r146 $f; python3 "<repo>/scripts/r180-panel-keep-splash.py" $f
+f=$src/drivers/gpu/drm/panel/panel-novatek-nt36523.c; [ -f $f.r146 ] || cp $f $f.r146; cp $f.r146 $f; python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/r180-panel-keep-splash.py" $f
 ext panel-novatek-nt36523 drivers/gpu/drm/panel/panel-novatek-nt36523.c drivers/gpu/drm/panel -DCONFIG_BACKLIGHT_CLASS_DEVICE_MODULE=1
 for m in "$pkg"/*.ko; do echo "$(basename $m): $(modinfo -F vermagic $m) deps=$(modinfo -F depends $m)"; done
 sha256sum "$pkg/Image" "$pkg"/*.ko

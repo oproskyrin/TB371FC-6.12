@@ -1,4 +1,4 @@
-﻿#Requires -Version 5.1
+#Requires -Version 5.1
 <#
   TB371FC / Opus phase 2 - READ-ONLY targeted diagnostics.
   Ничего не меняет на планшете.
@@ -7,8 +7,8 @@
 param(
     [string]$TabletIp     = '192.168.1.150',
     [int]   $Port         = 2222,
-    [string]$IdentityFile = '<repo>\artifacts\tb371fc-development-ssh\id_ed25519',
-    [string]$ProjectRoot  = '<repo>',
+    [string]$IdentityFile = (Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts\tb371fc-development-ssh\id_ed25519'),
+    [string]$ProjectRoot  = (Split-Path -Parent $PSScriptRoot),
     [string]$RemoteScript = 'opus-phase2.sh'
 )
 $ErrorActionPreference = 'Continue'
