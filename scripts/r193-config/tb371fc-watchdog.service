@@ -1,0 +1,13 @@
+[Unit]
+Description=TB371FC hardware watchdog (Qualcomm APSS WDT): a hung kernel resets into the flashed release
+DefaultDependencies=no
+Before=sysinit.target
+ConditionPathExists=/proc/device-tree/soc@0/watchdog@17c10000
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'a=/usr/local/lib/tb371fc/watchdog-r193; grep -q "^watchdog " /proc/modules || insmod $a/watchdog.ko; grep -q "^qcom_wdt " /proc/modules || insmod $a/qcom-wdt.ko'
+
+[Install]
+WantedBy=sysinit.target

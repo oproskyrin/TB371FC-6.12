@@ -42,6 +42,7 @@ tablet's second recovery slot (`recovery_b`).
 | Battery charge limit (default 80/75 %, `/etc/tb371fc/chglimit.conf`) | ✅ |
 | Built-in microphone (main, mono; WCD938x over SoundWire) | ✅ |
 | Second microphone (noise suppression) | ❌ |
+| Hardware watchdog: a hung system resets back into the working release | ✅ |
 | Desktop ~11 s after Linux starts; Chromium sandbox (USER_NS + PID_NS + seccomp) | ✅ |
 | USB-C: USB 2.0 device mode only (PC link); host mode (flash drives, hubs), USB 3 and video output not yet | ❌ |
 | Chromium on the GPU (WebGL, rasterization); 1080p video smooth — 1.5–3 % dropped frames (26 % without GPU) | ✅ |
@@ -50,7 +51,7 @@ tablet's second recovery slot (`recovery_b`).
 | Display: framebuffer handed over from the bootloader (simpledrm, 60 Hz) | ⚠️ |
 | Native DPU/DSI display driver, 120 Hz | ❌ in progress (left half correct, right half noise) |
 | microSD SDR104 writes | ❌ (reads work; needs BH201 output tuning) |
-| Cameras, sleep/suspend, dock keyboard pogo pins | ❌ / not tested |
+| Cameras (camera block unreachable after the recovery boot path, see `docs/CAMERA_INVESTIGATION.md`), sleep/suspend, dock keyboard pogo pins | ❌ / not tested |
 
 ## How it boots
 
