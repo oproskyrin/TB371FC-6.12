@@ -1,0 +1,16 @@
+#!/bin/sh
+
+set -eu
+payload_dir=/run/tb371fc-kexec
+kexec=/bin/kexec
+[ -x "$kexec" ] || kexec=/run/tb371fc-rescue/kexec
+[ -x "$kexec" ] || { echo 'kexec binary is unavailable' >&2; exit 1; }
+[ "$(cat "$payload_dir/state" 2>/dev/null || true)" = loaded ] || {
+	echo 'No verified mainline payload is loaded.' >&2
+	exit 1
+}
+echo 'Executing verified mainline payload now.' >/dev/console
+sync
+"$kexec" -e
+echo 'kexec returned unexpectedly.' >&2
+exit 1

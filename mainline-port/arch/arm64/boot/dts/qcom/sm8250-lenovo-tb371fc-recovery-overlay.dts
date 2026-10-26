@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Minimal recovery overlay for ABL's legacy Kona DTB/DTBO selection.
+ *
+ * The normal mainline TB371FC DTB is already a complete board description.
+ * Applying ZUI's downstream QRD overlay to it fails with FDT_ERR_NOTFOUND
+ * because the downstream symbols and phandles do not exist in mainline.
+ * This matching, deliberately empty overlay lets ABL select board 0xb without
+ * changing the complete mainline tree.
+ */
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	model = "Lenovo TB371FC mainline recovery overlay";
+	compatible = "qcom,kona-qrd", "qcom,kona", "qcom,qrd";
+	qcom,board-id = <0xb 0>;
+
+	fragment@0 {
+		target-path = "/";
+
+		__overlay__ {
+		};
+	};
+};

@@ -1,0 +1,65 @@
+#!/bin/sh
+# Start Plasma only after the native Linux 7.x DRM path has been validated.
+set -eu
+
+confirmation=${1:-}
+kernel_release=$(uname -r)
+runtime=/run/user/0
+
+if [ "$confirmation" != "I_UNDERSTAND_DRM_MODESET" ]; then
+	echo 'Refusing to start Plasma without I_UNDERSTAND_DRM_MODESET.' >&2
+	exit 2
+fi
+
+case "$kernel_release" in
+	7.*-tb371fc*) ;;
+	*)
+		echo "Refusing DRM modeset on unapproved kernel: $kernel_release" >&2
+		exit 3
+		;;
+esac
+
+for executable in /usr/bin/startplasma-wayland /usr/bin/kwin_wayland \
+	/usr/bin/dbus-run-session; do
+	[ -x "$executable" ] || {
+		echo "Missing required executable: $executable" >&2
+		exit 4
+	}
+done
+
+[ -c /dev/dri/card0 ] || {
+	echo 'Missing /dev/dri/card0; native DRM is not ready.' >&2
+	exit 5
+}
+
+connector_ready=0
+for status in /sys/class/drm/card*-DSI-*/status; do
+	[ -r "$status" ] || continue
+	[ "$(cat "$status")" = connected ] && connector_ready=1
+done
+[ "$connector_ready" = 1 ] || {
+	echo 'No connected internal DSI connector; keeping the text console.' >&2
+	exit 6
+}
+
+if pgrep -x kwin_wayland >/dev/null 2>&1 || \
+	pgrep -x startplasma-wayland >/dev/null 2>&1; then
+	echo 'A Plasma/KWin session is already running.' >&2
+	exit 7
+fi
+
+if pgrep -f '/run/tb371fc-rescue/drm-kms-smoketest' >/dev/null 2>&1; then
+	echo 'Legacy DRM smoke test still owns the display; stop it first.' >&2
+	exit 8
+fi
+
+mkdir -p "$runtime"
+chmod 0700 "$runtime"
+export XDG_RUNTIME_DIR="$runtime"
+export XDG_SESSION_TYPE=wayland
+export QT_QPA_PLATFORM=wayland
+export PLASMA_USE_QT_SCALING=1
+export QT_SCALE_FACTOR=${QT_SCALE_FACTOR:-1.75}
+
+echo "Starting guarded Plasma Wayland on $kernel_release."
+exec /usr/bin/dbus-run-session -- /usr/bin/startplasma-wayland

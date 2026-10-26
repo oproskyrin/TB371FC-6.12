@@ -1,0 +1,11 @@
+Port 2222
+ListenAddress 172.31.77.2
+HostKey /etc/ssh/ssh_host_ed25519_key
+PidFile /run/r130/sshd.pid
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+AuthorizedKeysFile /root/.ssh/authorized_keys
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+UsePAM yes
+Subsystem sftp internal-sftp

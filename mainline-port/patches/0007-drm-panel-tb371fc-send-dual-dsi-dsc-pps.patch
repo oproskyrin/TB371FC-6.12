@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000007 Mon Sep 17 00:00:00 2001
+From: TB371FC Linux Project <tb371fc-linux@localhost>
+Date: Wed, 12 Aug 2026 18:40:00 +0500
+Subject: [PATCH] drm/panel: tb371fc: send dual-DSI DSC PPS
+
+The panel command table configures the NT36532 but did not transmit a DSC
+Picture Parameter Set.  Meanwhile both DSI hosts and DPU were already
+configured to emit compressed pixels, leaving the panel without the stream
+geometry required to decode them.
+
+Describe the full 2944x1840 picture while retaining MSM's per-interface slice
+count (1472 / 736 = 2), pack the resulting PPS and transmit it to both links
+before sleep-out and display-on.  This matches the stock payload geometry and
+the ordering required for a cold panel enable.
+---
+ drivers/gpu/drm/panel/panel-novatek-nt36523.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36523.c b/drivers/gpu/drm/panel/panel-novatek-nt36523.c
+index 335a19f1acae..6643de2c8a61 100644
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36523.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36523.c
+@@ -486,6 +486,7 @@ static int tb371fc_nt36532_init_sequence(struct panel_info *pinfo, bool boe)
+ 	struct mipi_dsi_device *dsi0 = pinfo->dsi[0];
+ 	struct mipi_dsi_device *dsi1 = pinfo->dsi[1];
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = NULL };
++	struct drm_dsc_picture_parameter_set pps;
+ 
+ 	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xff, 0x20);
+ 	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xfb, 0x01);
+@@ -592,6 +593,10 @@ static int tb371fc_nt36532_init_sequence(struct panel_info *pinfo, bool boe)
+ 	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x51, 0x07, 0xff);
+ 	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x53, 0x2c);
+ 	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x55, 0x01);
++	drm_dsc_pps_payload_pack(&pps, &pinfo->dsc);
++	mipi_dsi_dual(mipi_dsi_picture_parameter_set_multi, &dsi_ctx,
++		      dsi0, dsi1, &pps);
++
+ 	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, MIPI_DCS_EXIT_SLEEP_MODE);
+ 	mipi_dsi_msleep(&dsi_ctx, 120);
+ 	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, MIPI_DCS_SET_DISPLAY_ON);
+@@ -1071,10 +1076,12 @@ static const struct drm_display_mode tb371fc_modes[] = {
+ static const struct drm_dsc_config tb371fc_dsc = {
+ 	.dsc_version_major = 1,
+ 	.dsc_version_minor = 1,
++	.pic_width = 2944,
++	.pic_height = 1840,
+ 	.slice_height = 20,
+ 	.slice_width = 736,
+ 	/* Two 736-pixel DSC slices are carried by each 1472-pixel DSI link. */
+ 	.slice_count = 2,
+ 	.bits_per_component = 8,
+ 	.bits_per_pixel = 8 << 4,
+ 	.block_pred_enable = true,

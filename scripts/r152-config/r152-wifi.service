@@ -1,0 +1,9 @@
+[Unit]
+Description=TB371FC QCA6390 Wi-Fi (ath11k) + SSH over Wi-Fi
+After=multi-user.target systemd-udevd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/run/r130/busybox sh /run/r130/config/r152-wifi.sh
+TimeoutStartSec=300s

@@ -1,0 +1,61 @@
+#!/bin/sh
+
+# A minimal, storage-safe control environment for the exact Lenovo 4.19.157
+# recovery kernel.  It deliberately avoids loading modules built for another
+# kernel release and never mounts Android or microSD partitions.
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /proc /sys /run /tmp /dev/pts /dev/dri /sys/kernel/debug
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+
+[ -c /dev/console ] || busybox mknod -m 600 /dev/console c 5 1
+[ -c /dev/null ] || busybox mknod -m 666 /dev/null c 1 3
+[ -c /dev/zero ] || busybox mknod -m 666 /dev/zero c 1 5
+
+hostname tb371fc-stock-kernel-control
+dmesg -n 8
+echo 'TB371FC V43: exact Lenovo 4.19.157 kernel control boot'
+echo 'Android and microSD partitions will not be mounted.'
+
+if setup-usb-console; then
+	for _ in $(seq 1 60); do
+		[ -e /sys/class/net/usb0 ] && break
+		sleep 1
+	done
+	if [ -e /sys/class/net/usb0 ]; then
+		busybox ip link set usb0 up
+		busybox ip addr add 169.254.77.2/16 dev usb0 2>/dev/null || \
+			busybox ifconfig usb0 169.254.77.2 netmask 255.255.0.0 up
+		( exec busybox nc -lk -p 2323 -e /bin/sh ) &
+		echo $! >/run/tb371fc-rescue-shell.pid
+	fi
+fi
+
+for _ in $(seq 1 120); do
+	[ -r /sys/class/drm/card0/dev ] && break
+	sleep 1
+done
+
+if [ "$(cat /sys/class/drm/card0/dev 2>/dev/null)" = 226:0 ]; then
+	[ -c /dev/dri/card0 ] || busybox mknod -m 660 /dev/dri/card0 c 226 0
+	setsid /bin/drm-kms-smoketest 120 red 86400 \
+		>/run/tb371fc-v43-kms.log 2>&1 </dev/null &
+	echo $! >/run/tb371fc-v43-kms.pid
+else
+	echo 'V43: DRM card0 did not appear.' >/run/tb371fc-v43-kms.log
+fi
+
+while :; do
+	if [ -e /sys/class/net/usb0 ]; then
+		busybox ip addr add 169.254.77.2/16 dev usb0 2>/dev/null || true
+		busybox ip link set usb0 up 2>/dev/null || true
+	fi
+	sleep 2
+done

@@ -1,0 +1,16 @@
+#!/bin/sh
+
+payload=/run/tb371fc-rescue/linux-6.12-r38
+state=$(cat /run/tb371fc-linux612-r38.state 2>/dev/null || echo not-loaded)
+echo "TB371FC Linux 6.12 controlled loader r38: $state"
+echo "first stage: $(uname -r)"
+echo "watchdog gate: $(cat /sys/devices/platform/soc/17c10000.qcom,wdt/disable 2>/dev/null || echo unavailable)"
+for file in Image board.dtb initramfs.cpio.gz; do
+	if [ -s "$payload/$file" ]; then
+		/run/tb371fc-rescue/busybox sha256sum "$payload/$file"
+	else
+		echo "missing: $payload/$file"
+	fi
+done
+echo 'Load only: /run/tb371fc-rescue/load-linux-6.12-r38'
+echo 'Execute:   /run/tb371fc-rescue/execute-linux-6.12-r38'

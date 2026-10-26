@@ -1,0 +1,65 @@
+#!/bin/sh
+# Persistent, guarded Plasma Shell profile for TB371FC V56.
+# The compositor stays on llvmpipe; plasmashell renders through OpenGL/Zink,
+# Turnip and its forced Wayland SHM presentation path. Direct Qt Vulkan showed keyboard
+# flicker, while this OpenGL path passed glmark2 validation. If the accelerated
+# shell exits, fall back once per boot to the proven software renderer.
+set -u
+
+icd=/opt/tb371fc-mesa-kgsl-26.1.7/share/vulkan/icd.d/freedreno_icd.aarch64.json
+mesa=/opt/tb371fc-mesa-zink-patched
+log=/var/log/tb371fc-plasmashell-turnip.log
+fallback=/run/tb371fc-plasmashell-software-fallback
+base_ld_library_path=${LD_LIBRARY_PATH-}
+
+run_software() {
+	unset QSG_RHI_BACKEND VK_ICD_FILENAMES VK_DRIVER_FILES
+	unset MESA_LOADER_DRIVER_OVERRIDE GALLIUM_DRIVER TU_DEBUG MESA_VK_WSI_DEBUG
+	unset TB371FC_ZINK_KGSL_ALLOW_UNMATCHED LIBGL_DRIVERS_PATH
+	unset __EGL_VENDOR_LIBRARY_FILENAMES
+	if [ -n "$base_ld_library_path" ]; then
+		export LD_LIBRARY_PATH="$base_ld_library_path"
+	else
+		unset LD_LIBRARY_PATH
+	fi
+	export QT_QUICK_BACKEND=software
+	export QSG_RHI_BACKEND=software
+	export LIBGL_ALWAYS_SOFTWARE=1
+	exec /usr/bin/plasmashell "$@"
+}
+
+case "$(uname -r)" in
+	4.19.157-perf-v56*) ;;
+	*) run_software "$@" ;;
+esac
+
+if [ -e /etc/tb371fc/disable-turnip-plasmashell ] ||
+		[ -e "$fallback" ] || [ ! -s "$icd" ] || [ ! -c /dev/kgsl-3d0 ]; then
+	run_software "$@"
+fi
+[ -r "$mesa/lib/libgallium-26.1.7.so" ] || run_software "$@"
+
+unset LIBGL_ALWAYS_SOFTWARE QT_QUICK_BACKEND
+export QSG_RHI_BACKEND=opengl
+export TB371FC_ZINK_KGSL_ALLOW_UNMATCHED=1
+export LIBGL_DRIVERS_PATH="$mesa/lib/dri"
+export LD_LIBRARY_PATH="$mesa/lib${base_ld_library_path:+:$base_ld_library_path}"
+export __EGL_VENDOR_LIBRARY_FILENAMES="$mesa/share/glvnd/egl_vendor.d/50_mesa.json"
+export VK_ICD_FILENAMES="$icd"
+export VK_DRIVER_FILES="$icd"
+export MESA_LOADER_DRIVER_OVERRIDE=zink
+export GALLIUM_DRIVER=zink
+export TU_DEBUG=noconform
+export MESA_VK_WSI_DEBUG=sw
+
+echo "=== $(date -Iseconds 2>/dev/null || date) guarded start ===" >>"$log"
+/usr/bin/plasmashell "$@" >>"$log" 2>&1
+rc=$?
+if [ "$rc" -eq 0 ]; then
+	# A normal --replace or session shutdown is not a GPU failure. The caller
+	# may already have started the replacement shell.
+	exit 0
+fi
+echo "Accelerated plasmashell exited with rc=$rc; using software fallback." >>"$log"
+: >"$fallback"
+run_software "$@"

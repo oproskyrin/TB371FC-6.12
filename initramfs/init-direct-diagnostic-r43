@@ -1,0 +1,88 @@
+#!/bin/sh
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /proc /sys /run /tmp /sys/fs/pstore /sys/kernel/debug
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+if ! grep -q ' /dev ' /proc/mounts; then
+	mount -t tmpfs -o mode=0755,nosuid tmpfs /dev || exec setsid cttyhack sh
+fi
+mkdir -p /dev/pts
+[ -c /dev/console ] || busybox mknod -m 600 /dev/console c 5 1
+[ -c /dev/null ] || busybox mknod -m 666 /dev/null c 1 3
+[ -c /dev/zero ] || busybox mknod -m 666 /dev/zero c 1 5
+[ -c /dev/tty ] || busybox mknod -m 666 /dev/tty c 5 0
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+mount -t pstore pstore /sys/fs/pstore 2>/dev/null || true
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+
+if [ -e /sys/class/tty/tty0/dev ] && grep -qx '4:0' /sys/class/tty/tty0/dev && [ ! -c /dev/tty0 ]; then
+	busybox mknod -m 620 /dev/tty0 c 4 0
+fi
+if [ -e /sys/class/graphics/fb0/dev ] && grep -qx '29:0' /sys/class/graphics/fb0/dev && [ ! -c /dev/fb0 ]; then
+	busybox mknod -m 600 /dev/fb0 c 29 0
+fi
+show_status() {
+	echo "[TB371FC r43] $*" >/dev/tty0 2>/dev/null || true
+	echo "[TB371FC r43] $*"
+}
+refresh_visible_console() {
+	for vtconsole in /sys/class/vtconsole/vtcon*; do
+		[ -r "$vtconsole/name" ] || continue
+		case "$(cat "$vtconsole/name")" in
+			*frame\ buffer*) echo 1 >"$vtconsole/bind" 2>/dev/null || true ;;
+		esac
+	done
+	[ ! -w /sys/class/graphics/fb0/blank ] || echo 0 >/sys/class/graphics/fb0/blank 2>/dev/null || true
+}
+
+hostname tb371fc-r43-diag
+dmesg -n 8
+show_status 'userspace reached; collecting early diagnostics'
+tb371fc-early-diag-r43 capture init-entry
+tb371fc-early-diag-r43 persist init-entry || true
+
+for module in pwrseq_qcom_wcn ath11k_pci msm qcom_spmi_adc_tm5 nt36523_ts r8152 ax88179_178a cdc_ether; do
+	modprobe "$module" 2>/dev/null || true
+done
+refresh_visible_console
+tb371fc-early-diag-r43 capture post-modprobe
+tb371fc-early-diag-r43 persist post-modprobe || true
+show_status 'diagnostic snapshot saved to microSD; preparing USB rescue'
+
+if setup-usb-console; then
+	for _ in $(seq 1 60); do
+		[ -e /sys/class/net/usb0 ] && break
+		sleep 1
+	done
+	if [ -e /sys/class/net/usb0 ]; then
+		busybox ip link set usb0 up
+		busybox ip addr add 169.254.77.2/16 dev usb0 2>/dev/null || busybox ifconfig usb0 169.254.77.2 netmask 255.255.0.0 up
+		mkdir -p /run/tb371fc-rescue
+		cp /bin/busybox /run/tb371fc-rescue/busybox
+		ln -sf busybox /run/tb371fc-rescue/sh
+		( exec busybox nc -lk -p 2323 -e /run/tb371fc-rescue/sh ) &
+		echo $! >/run/tb371fc-rescue-shell.pid
+		show_status 'USB rescue ready: 169.254.77.2 port 2323'
+		(
+			while :; do
+				busybox ip addr add 169.254.77.2/16 dev usb0 2>/dev/null || true
+				busybox ip link set usb0 up 2>/dev/null || true
+				sleep 2
+			done
+		) &
+		echo $! >/run/tb371fc-network-watchdog.pid
+	else
+		show_status 'USB gadget configured but usb0 did not appear'
+	fi
+else
+	show_status 'USB gadget setup failed; microSD diagnostics remain available'
+fi
+
+tb371fc-early-diag-r43 capture pre-arch-handoff
+tb371fc-early-diag-r43 persist pre-arch-handoff || true
+show_status 'starting persistent Arch root handoff'
+exec boot-arch-development-rootfs

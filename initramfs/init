@@ -1,0 +1,112 @@
+#!/bin/sh
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /dev/pts /proc /sys /run /tmp /sys/kernel/debug
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+
+hostname tb371fc-diag
+dmesg -n 8
+
+for module in pwrseq_qcom_wcn ath11k_pci msm qcom_spmi_adc_tm5 nt36523_ts \
+	r8152 ax88179_178a cdc_ether; do
+	modprobe "$module" 2>/dev/null || true
+done
+
+if setup-usb-console; then
+	usb_mode=$(cat /run/tb371fc-usb-mode 2>/dev/null || true)
+	if [ "$usb_mode" = acm ]; then
+		getty -L -n -l /bin/sh 115200 ttyGS0 vt100 &
+	elif [ "$usb_mode" = ncm ]; then
+		for _ in 1 2 3 4 5; do
+			[ -e /sys/class/net/usb0 ] && break
+			sleep 1
+		done
+		# Link-local addressing lets an ordinary Windows host reach the tablet
+		# without adding a privileged static address to the NCM adapter.
+		ip addr add 169.254.77.2/16 dev usb0 2>/dev/null || true
+		ip link set usb0 up 2>/dev/null || true
+		# Keep a raw diagnostic shell available after health checks that connect
+		# and immediately disconnect. BusyBox nc -lk accepts subsequent clients;
+		# telnetd on this downstream kernel stopped listening after the first
+		# empty Windows TCP probe.
+		busybox nc -lk -p 2323 -e /bin/sh &
+	fi
+fi
+
+report=/run/tb371fc-report.txt
+{
+	echo "TB371FC Linux diagnostic environment"
+	echo "Kernel: $(uname -a)"
+	echo
+	echo "== command line =="
+	cat /proc/cmdline
+	echo
+	echo "== device model =="
+	tr '\000' '\n' </proc/device-tree/model 2>/dev/null || true
+	echo
+	echo "== block devices =="
+	ls -l /sys/class/block 2>/dev/null || true
+	echo
+	echo "== USB devices =="
+	lsusb 2>/dev/null || true
+	find /sys/bus/usb/devices -maxdepth 2 -type f \
+		\( -name idVendor -o -name idProduct -o -name product -o \
+		-name manufacturer -o -name speed \) \
+		-print -exec cat {} \; 2>/dev/null || true
+	echo
+	echo "== network interfaces =="
+	ip addr 2>/dev/null || true
+	for interface in /sys/class/net/*; do
+		[ -d "$interface" ] || continue
+		echo "-- $(basename "$interface")"
+		for attribute in address carrier operstate speed; do
+			grep -H . "$interface/$attribute" 2>/dev/null || true
+		done
+	done
+	echo
+	echo "== DRM =="
+	find /sys/class/drm -maxdepth 2 -type f -name status -print -exec cat {} \; 2>/dev/null || true
+	echo
+	echo "== Type-C =="
+	find /sys/class/typec -maxdepth 3 -type f -print 2>/dev/null || true
+	echo
+	echo "== PCI =="
+	find /sys/bus/pci/devices -maxdepth 2 -type f \( -name vendor -o -name device -o -name modalias \) -print -exec cat {} \; 2>/dev/null || true
+	echo
+	echo "== power supplies =="
+	for supply in /sys/class/power_supply/*; do
+		[ -d "$supply" ] || continue
+		echo "-- $(basename "$supply")"
+		for attribute in status capacity voltage_now current_now online type; do
+			grep -H . "$supply/$attribute" 2>/dev/null || true
+		done
+	done
+	echo
+	echo "== input devices =="
+	grep -H . /proc/bus/input/devices 2>/dev/null || true
+	input-monitor 2>/dev/null || true
+	echo
+	echo "== loaded modules =="
+	cat /proc/modules 2>/dev/null || true
+	echo
+	echo "== dmesg =="
+	dmesg
+} >"$report" 2>&1
+
+cat "$report"
+echo
+echo "Report saved as $report"
+echo "This image does not mount or modify Android partitions."
+echo "If USB gadget mode initialized, a CDC-ACM serial shell is also active."
+echo "Run 'input-monitor' to list event devices, then"
+echo "'input-monitor /dev/input/eventN' to inspect AP500U events."
+echo "For dock Ethernet, run 'ip link' and then 'udhcpc -i INTERFACE'."
+echo "DHCP is never started automatically by this diagnostic image."
+echo "Starting an emergency shell. Type 'poweroff -f' to shut down."
+exec setsid cttyhack sh

@@ -1,0 +1,35 @@
+#!/bin/sh
+
+# V54 keeps the CDC ACM transport physically proven by V51 and V53. Arch
+# userspace gates and tunnels OpenSSH over ttyGS0 after verifying that sshd is
+# listening, avoiding the unsupported NCM function on this community kernel.
+
+modprobe libcomposite 2>/dev/null || true
+mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
+[ -d /sys/kernel/config/usb_gadget ] || exit 1
+
+gadget=/sys/kernel/config/usb_gadget/tb371fc_v54_ssh
+mkdir -p "$gadget/strings/0x409" \
+	"$gadget/configs/c.1/strings/0x409"
+echo 0x1d6b >"$gadget/idVendor"
+echo 0x0104 >"$gadget/idProduct"
+echo TB371FC-V54-SSH >"$gadget/strings/0x409/serialnumber"
+echo TB371FC-Linux >"$gadget/strings/0x409/manufacturer"
+echo 'TB371FC V54 gated serial OpenSSH' >"$gadget/strings/0x409/product"
+echo 'CDC ACM transport for gated OpenSSH' \
+	>"$gadget/configs/c.1/strings/0x409/configuration"
+
+mkdir "$gadget/functions/acm.GS0" || exit 1
+ln -s "$gadget/functions/acm.GS0" "$gadget/configs/c.1/acm.GS0" || exit 1
+
+for udc_path in /sys/class/udc/*; do
+	[ -e "$udc_path" ] || continue
+	udc=${udc_path##*/}
+	if echo "$udc" >"$gadget/UDC"; then
+		echo acm >/run/tb371fc-usb-mode
+		echo "USB ACM gated SSH transport bound to $udc"
+		exit 0
+	fi
+done
+exit 1
+

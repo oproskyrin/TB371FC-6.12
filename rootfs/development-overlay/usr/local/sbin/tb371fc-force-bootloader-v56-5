@@ -1,0 +1,24 @@
+#!/bin/sh
+# Bypass downstream device_shutdown after a separate successful sync.
+set -u
+
+required_token=V56_5_LOGS_COPIED_FORCE_BOOTLOADER
+module=/usr/local/lib/tb371fc/reboot-bootloader-emergency-v56.5.ko
+expected=69242fd01c95d395b4d95d8e8e059476933ae215ffe02db099b580a94b6c1b92
+
+if [ "$#" -ne 1 ] || [ "$1" != "$required_token" ]; then
+	echo "Refusing direct restart. Required token: $required_token" >&2
+	exit 2
+fi
+[ "$(/usr/bin/uname -r)" = 4.19.157-perf-v56.5+ ] || {
+	echo 'Refusing direct restart outside the pinned V56.5 kernel.' >&2
+	exit 3
+}
+actual=$(/usr/bin/sha256sum "$module" 2>/dev/null | /usr/bin/cut -d' ' -f1)
+[ "$actual" = "$expected" ] || {
+	echo "Refusing unexpected emergency module: $actual" >&2
+	exit 4
+}
+
+echo 'Direct V56.5 bootloader restart armed; normal device shutdown is bypassed.' >&2
+exec /usr/bin/insmod "$module"

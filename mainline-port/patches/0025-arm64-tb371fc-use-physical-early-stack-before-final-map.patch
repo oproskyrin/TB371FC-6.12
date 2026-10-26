@@ -1,0 +1,27 @@
+From: TB371FC Linux bring-up <tb371fc@example.invalid>
+Subject: [PATCH] arm64: tb371fc: use identity-mapped early stack
+
+The V56 handoff loads the Image at 0xa4000000.  Immediately after enabling
+the MMU, TTBR1 does not yet provide a usable mapping for early_init_stack.
+Use its physical address under TTBR0 until __pi_early_map_kernel constructs
+the final kernel mapping.
+---
+ arch/arm64/kernel/head.S | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/arch/arm64/kernel/head.S b/arch/arm64/kernel/head.S
+--- a/arch/arm64/kernel/head.S
++++ b/arch/arm64/kernel/head.S
+@@ -645,5 +645,10 @@ SYM_FUNC_START_LOCAL(__primary_switch)
+ 
+ 	adrp	x1, early_init_stack
++	adrp	x3, _text
++	sub	x1, x1, x3
++	movz	x3, #0x0000
++	movk	x3, #0xa400, lsl #16
++	add	x1, x1, x3
+ 	mov	sp, x1
+ 	mov	x29, xzr
+ #ifdef CONFIG_TB371FC_EARLY_FB_MARKER
+-- 
+2.43.0

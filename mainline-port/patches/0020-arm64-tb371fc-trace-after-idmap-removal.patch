@@ -1,0 +1,126 @@
+From: TB371FC Linux bring-up <tb371fc@example.invalid>
+Subject: [PATCH] arm64: tb371fc: trace after idmap removal
+
+Keep a small diagnostic stripe mapped through the early fixmap so marker
+writes remain possible after TTBR0 stops pointing at the identity map. Once
+paging_init() installs the final linear map, switch the marker to the normal
+linear alias. This is bring-up instrumentation only.
+---
+ arch/arm64/kernel/setup.c | 55 ++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 53 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/kernel/setup.c b/arch/arm64/kernel/setup.c
+index 15bad0bfb..388fd87f1 100644
+--- a/arch/arm64/kernel/setup.c
++++ b/arch/arm64/kernel/setup.c
+@@ -34,6 +34,8 @@
+ #include <linux/mm.h>
+ 
+ #include <asm/acpi.h>
++#include <asm/early_ioremap.h>
++#include <asm/memory.h>
+ #include <asm/fixmap.h>
+ #include <asm/cpu.h>
+ #include <asm/cputype.h>
+@@ -279,16 +281,48 @@ u64 cpu_logical_map(unsigned int cpu)
+ }
+ 
+ #ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++#define TB371FC_FB_STRIDE_PIXELS	2944UL
++#define TB371FC_FB_MARKER_PHYS		0x9d140000ULL
++#define TB371FC_FB_WIDE_ROWS		256UL
++#define TB371FC_FB_FIXMAP_ROWS		16UL
++#define TB371FC_FB_FIXMAP_SIZE \
++	(TB371FC_FB_STRIDE_PIXELS * TB371FC_FB_FIXMAP_ROWS * sizeof(u32))
++
++static void __iomem *tb371fc_fb_marker_base;
++static unsigned long tb371fc_fb_marker_rows = TB371FC_FB_WIDE_ROWS;
++
+ void __init __no_sanitize_address tb371fc_start_kernel_fb_marker(u32 color)
+ {
+-	volatile u32 *pixel = (volatile u32 *)0x9d140000UL;
+-	unsigned long remaining = 2944UL * 256UL;
++	volatile u32 *pixel = tb371fc_fb_marker_base ?
++		(volatile u32 *)tb371fc_fb_marker_base :
++		(volatile u32 *)(unsigned long)TB371FC_FB_MARKER_PHYS;
++	unsigned long remaining = TB371FC_FB_STRIDE_PIXELS *
++				  tb371fc_fb_marker_rows;
+ 
+ 	while (remaining--)
+ 		*pixel++ = color;
+ 
+ 	asm volatile("dsb sy" ::: "memory");
+ }
++
++static void __init tb371fc_map_fixmap_fb_marker(void)
++{
++	void __iomem *base;
++
++	base = early_ioremap(TB371FC_FB_MARKER_PHYS,
++			     TB371FC_FB_FIXMAP_SIZE);
++	if (base) {
++		tb371fc_fb_marker_base = base;
++		tb371fc_fb_marker_rows = TB371FC_FB_FIXMAP_ROWS;
++	}
++}
++
++static void __init tb371fc_use_linear_fb_marker(void)
++{
++	tb371fc_fb_marker_base = (void __iomem *)
++		__phys_to_virt(TB371FC_FB_MARKER_PHYS);
++	tb371fc_fb_marker_rows = TB371FC_FB_FIXMAP_ROWS;
++}
+ #endif
+ 
+ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+@@ -306,6 +340,9 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 
+ 	early_fixmap_init();
+ 	early_ioremap_init();
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	tb371fc_map_fixmap_fb_marker();
++#endif
+ #ifdef CONFIG_TB371FC_EARLY_FB_MARKER
+ 	/* Stage 22: early fixmap and ioremap are initialized (cyan). */
+ 	tb371fc_start_kernel_fb_marker(0xff00ffff);
+@@ -355,8 +392,17 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 	 */
+ 	cpu_uninstall_idmap();
+ 
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 26: TTBR0 no longer carries the boot identity map (lime). */
++	tb371fc_start_kernel_fb_marker(0xff40ff40);
++#endif
++
+ 	xen_early_init();
+ 	efi_init();
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 27: Xen and EFI early hooks returned (azure). */
++	tb371fc_start_kernel_fb_marker(0xff0080ff);
++#endif
+ 
+ 	if (!efi_enabled(EFI_BOOT)) {
+ 		if ((u64)_text % MIN_KIMG_ALIGN)
+@@ -366,8 +412,20 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 	}
+ 
+ 	arm64_memblock_init();
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 28: the arm64 memblock layout was accepted (orange). */
++	tb371fc_start_kernel_fb_marker(0xffff8000);
++	/* Stage 29: entering paging_init() (yellow). */
++	tb371fc_start_kernel_fb_marker(0xffffff00);
++#endif
+ 
+ 	paging_init();
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* early_ioremap was reset; the final linear map is active now. */
++	tb371fc_use_linear_fb_marker();
++	/* Stage 30: final kernel page tables are active (purple). */
++	tb371fc_start_kernel_fb_marker(0xff8000ff);
++#endif
+ 
+ 	acpi_table_upgrade();
+ 
+-- 
+2.45.2

@@ -1,0 +1,23 @@
+From 0000000000000000000000000000000000000008 Mon Sep 17 00:00:00 2001
+From: TB371FC Linux Project <tb371fc-linux@localhost>
+Date: Wed, 12 Aug 2026 18:48:00 +0500
+Subject: [PATCH] drm/panel: nt36523: include DSC PPS helper declaration
+
+The TB371FC panel path packs a DSC PPS during prepare, so include the helper
+API that declares drm_dsc_pps_payload_pack().
+---
+ drivers/gpu/drm/panel/panel-novatek-nt36523.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36523.c b/drivers/gpu/drm/panel/panel-novatek-nt36523.c
+index 6643de2c8a61..b75fca2be54e 100644
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36523.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36523.c
+@@ -14,6 +14,7 @@
+ #include <video/mipi_display.h>
+ 
+ #include <drm/display/drm_dsc.h>
++#include <drm/display/drm_dsc_helper.h>
+ #include <drm/drm_connector.h>
+ #include <drm/drm_crtc.h>
+ #include <drm/drm_mipi_dsi.h>

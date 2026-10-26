@@ -1,0 +1,73 @@
+#!/bin/sh
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /dev/pts /proc /sys /run /tmp /sys/kernel/debug
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+
+hostname tb371fc-display-test
+dmesg -n 8
+
+if setup-usb-console; then
+	usb_mode=$(cat /run/tb371fc-usb-mode 2>/dev/null || true)
+	if [ "$usb_mode" = acm ] || [ "$usb_mode" = acm+ncm ]; then
+		getty -L -n -l /bin/sh 115200 ttyGS0 vt100 &
+	fi
+	if [ "$usb_mode" = ncm ] || [ "$usb_mode" = acm+ncm ]; then
+		for second in 1 2 3 4 5; do
+			[ -e /sys/class/net/usb0 ] && break
+			sleep 1
+		done
+		ip addr add 169.254.77.2/16 dev usb0 2>/dev/null || true
+		ip link set usb0 up 2>/dev/null || true
+		busybox nc -lk -p 2323 -e /bin/sh &
+	fi
+fi
+
+pattern_status=missing
+for second in $(seq 1 90); do
+	if [ -c /dev/fb0 ]; then
+		if framebuffer-pattern /dev/fb0 >/run/framebuffer-pattern.txt 2>&1; then
+			pattern_status=drawn
+		else
+			pattern_status=failed
+		fi
+		break
+	fi
+	sleep 1
+done
+
+report=/run/tb371fc-display-report.txt
+{
+	echo "TB371FC Linux 7.1 native-display diagnostic"
+	echo "Kernel: $(uname -a)"
+	echo "Framebuffer pattern: $pattern_status"
+	cat /run/framebuffer-pattern.txt 2>/dev/null || true
+	echo
+	echo "== command line =="
+	cat /proc/cmdline
+	echo
+	echo "== DRM =="
+	find /sys/class/drm -maxdepth 3 -type f -print -exec cat {} \; 2>/dev/null || true
+	echo
+	echo "== framebuffer =="
+	find /sys/class/graphics -maxdepth 3 -type f -print -exec cat {} \; 2>/dev/null || true
+	echo
+	echo "== backlight =="
+	find /sys/class/backlight -maxdepth 3 -type f -print -exec cat {} \; 2>/dev/null || true
+	echo
+	echo "== dmesg =="
+	dmesg
+} >"$report" 2>&1
+
+cat "$report"
+echo "No Android partition was mounted or modified by this initramfs."
+# Leave the unmistakable pattern visible after console diagnostics finish.
+[ "$pattern_status" = drawn ] && framebuffer-pattern /dev/fb0 >/dev/null 2>&1
+exec setsid cttyhack sh

@@ -1,0 +1,280 @@
+From: TB371FC Linux Project <tb371fc-linux@localhost>
+Subject: [PATCH] drm/panel: nt36523: add Lenovo TB371FC NT36532 panels
+
+The Lenovo TB371FC uses a dual-DSI NT36532 LCD in either BOE or Tianma
+configuration. Each link drives 1472x1840 pixels over four D-PHY lanes. The
+panel uses DSC 1.1 with two 736-pixel slices per link and one slice per packet
+at 8 bits per pixel.
+
+The command tables, reset wiring and timings are derived from Lenovo's stock
+TB371FC device tree. Keep both vendor variants explicit so a wrong command
+table is never selected by guesswork.
+---
+ .../display/panel/novatek,nt36523.yaml        |   2 +
+ drivers/gpu/drm/panel/panel-novatek-nt36523.c | 209 ++++++++++++++++++
+ 2 files changed, 211 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/display/panel/novatek,nt36523.yaml b/Documentation/devicetree/bindings/display/panel/novatek,nt36523.yaml
+index 84b3820..f134fb1 100644
+--- a/Documentation/devicetree/bindings/display/panel/novatek,nt36523.yaml
++++ b/Documentation/devicetree/bindings/display/panel/novatek,nt36523.yaml
+@@ -29,6 +29,8 @@ properties:
+           - enum:
+               - xiaomi,elish-boe-nt36523
+               - xiaomi,elish-csot-nt36523
++              - lenovo,tb371fc-boe-nt36532
++              - lenovo,tb371fc-tianma-nt36532
+           - const: novatek,nt36523
+       - items:
+           - enum:
+diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36523.c b/drivers/gpu/drm/panel/panel-novatek-nt36523.c
+index 8349d13..a1f03a4 100644
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36523.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36523.c
+@@ -13,6 +13,7 @@
+ 
+ #include <video/mipi_display.h>
+ 
++#include <drm/display/drm_dsc.h>
+ #include <drm/drm_connector.h>
+ #include <drm/drm_crtc.h>
+ #include <drm/drm_mipi_dsi.h>
+@@ -27,6 +28,7 @@ struct panel_info {
+ 	struct mipi_dsi_device *dsi[2];
+ 	const struct panel_desc *desc;
+ 	enum drm_panel_orientation orientation;
++	struct drm_dsc_config dsc;
+ 
+ 	struct gpio_desc *reset_gpio;
+ 	struct backlight_device *backlight;
+@@ -45,6 +47,7 @@ struct panel_desc {
+ 	const struct mipi_dsi_device_info dsi_info;
+ 	int (*init_sequence)(struct panel_info *pinfo);
+ 
++	const struct drm_dsc_config *dsc;
+ 	bool is_dual_dsi;
+ 	bool has_dcs_backlight;
+ };
+@@ -279,6 +282,124 @@ static int elish_boe_init_sequence(struct panel_info *pinfo)
+ 	return dsi_ctx.accum_err;
+ }
+ 
++static int tb371fc_nt36532_init_sequence(struct panel_info *pinfo, bool boe)
++{
++	struct mipi_dsi_device *dsi0 = pinfo->dsi[0];
++	struct mipi_dsi_device *dsi1 = pinfo->dsi[1];
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = NULL };
++
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xff, 0x20);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xfb, 0x01);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x32, 0x72);
++
++	if (boe) {
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xff, 0x23);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xfb, 0x01);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x75, 0x03);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x76, 0x07);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x7a, 0xcd);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xbc, 0x04);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xff, 0x26);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xfb, 0x01);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x19, 0x1c, 0x1d, 0x16);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x1a, 0xdb, 0xb1, 0xa4);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x2a, 0x1c, 0x1d, 0x16);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x2b, 0xd3, 0xa9, 0x9c);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x99, 0x15, 0x1e, 0x04);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x9a, 0x30, 0x94, 0x3b);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x9d, 0x15, 0x1e, 0x04);
++		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x9e, 0x2a, 0x8c, 0x00);
++	}
++
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xff, 0x10);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xfb, 0x01);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x3b, 0x03, 0xb8, 0x1a, 0x0a, 0x0a, 0x00);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xff, 0x27);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xfb, 0x01);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x13, 0x06);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xd0, 0x31);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xd1, 0x84);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xd2, 0x38);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xff, 0x25);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xfb, 0x01);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x0f, 0x20);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xff, 0x23);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xfb, 0x01);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xbc, 0x04, 0x00, 0x3c);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xff, 0x10);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xfb, 0x01);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xff, 0x23);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xfb, 0x01);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x00, 0x60);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x07, 0x20);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x08, 0x01);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x09, 0xc2);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x10, 0x00);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x11, 0x03);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x12, 0x41);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x15, 0x64);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x16, 0x15);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x30, 0xff);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x31, 0xff);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x32, 0xff);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x33, 0xfc);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x34, 0xf9);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x35, 0xf5);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x36, 0xf2);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x37, 0xf0);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x38, 0xed);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x39, 0xeb);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x3a, 0xe8);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x3b, 0xe5);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x3d, 0xe3);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x3f, 0xe0);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x40, 0xde);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x41, 0xdb);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x58, 0xff);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x59, 0xff);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x5a, 0xfa);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x5b, 0xf7);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x5c, 0xf2);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x5d, 0xeb);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x5e, 0xe3);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x5f, 0xd9);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x60, 0xd1);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x61, 0xcc);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x62, 0xc7);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x63, 0xbf);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x64, 0xba);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x65, 0xb5);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x66, 0xb0);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x67, 0xab);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x19, 0x00);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x1a, 0x02);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x1b, 0x04);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x1c, 0x08);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x1d, 0x0e);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x1e, 0x14);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x1f, 0x18);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x20, 0x1e);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x21, 0x22);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x22, 0x26);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x23, 0x2a);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x24, 0x30);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x25, 0x34);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x26, 0x38);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x27, 0x3c);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x28, 0x3f);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x29, 0x10);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x2b, 0x28);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xff, 0x10);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xfb, 0x01);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x51, 0x07, 0xff);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x53, 0x2c);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x55, 0x01);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, MIPI_DCS_EXIT_SLEEP_MODE);
++	mipi_dsi_msleep(&dsi_ctx, 120);
++	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, MIPI_DCS_SET_DISPLAY_ON);
++	mipi_dsi_msleep(&dsi_ctx, 100);
++
++	return dsi_ctx.accum_err;
++}
++
++static int tb371fc_boe_init_sequence(struct panel_info *pinfo)
++{
++	return tb371fc_nt36532_init_sequence(pinfo, true);
++}
++
++static int tb371fc_tianma_init_sequence(struct panel_info *pinfo)
++{
++	return tb371fc_nt36532_init_sequence(pinfo, false);
++}
++
+ static int j606f_boe_init_sequence(struct panel_info *pinfo)
+ {
+ 	struct mipi_dsi_device *dsi = pinfo->dsi[0];
+@@ -914,6 +969,45 @@ static const struct drm_display_mode elish_csot_modes[] = {
+ 	},
+ };
+ 
++#define TB371FC_MODE(_refresh, _vfp) { \
++	.clock = (1472 + 201 + 12 + 60) * 2 * (1840 + (_vfp) + 2 + 182) * (_refresh) / 1000, \
++	.hdisplay = 1472 * 2, \
++	.hsync_start = (1472 + 201) * 2, \
++	.hsync_end = (1472 + 201 + 12) * 2, \
++	.htotal = (1472 + 201 + 12 + 60) * 2, \
++	.vdisplay = 1840, \
++	.vsync_start = 1840 + (_vfp), \
++	.vsync_end = 1840 + (_vfp) + 2, \
++	.vtotal = 1840 + (_vfp) + 2 + 182, \
++	.width_mm = 274, \
++	.height_mm = 171, \
++}
++
++static const struct drm_display_mode tb371fc_modes[] = {
++	TB371FC_MODE(120, 26),
++	TB371FC_MODE(144, 26),
++	TB371FC_MODE(60, 2076),
++	TB371FC_MODE(30, 6176),
++};
++
++static const struct drm_dsc_config tb371fc_dsc = {
++	.dsc_version_major = 1,
++	.dsc_version_minor = 1,
++	.slice_height = 20,
++	.slice_width = 736,
++	/* Two 736-pixel DSC slices are carried by each 1472-pixel DSI link. */
++	.slice_count = 2,
++	.bits_per_component = 8,
++	.bits_per_pixel = 8 << 4,
++	.block_pred_enable = true,
++};
++
++#define TB371FC_DESC(_init) { \
++	.modes = tb371fc_modes, \
++	.num_modes = ARRAY_SIZE(tb371fc_modes), \
++	.dsi_info = { .type = "TB371FC-NT36532", .channel = 0, .node = NULL }, \
++	.width_mm = 274, .height_mm = 171, .bpc = 8, .lanes = 4, \
++	.format = MIPI_DSI_FMT_RGB888, \
++	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST | MIPI_DSI_MODE_LPM, \
++	.init_sequence = (_init), .dsc = &tb371fc_dsc, .is_dual_dsi = true, \
++}
++
++static const struct panel_desc tb371fc_boe_desc = TB371FC_DESC(tb371fc_boe_init_sequence);
++static const struct panel_desc tb371fc_tianma_desc = TB371FC_DESC(tb371fc_tianma_init_sequence);
++
+ static const struct drm_display_mode j606f_boe_modes[] = {
+ 	{
+ 		.clock = (1200 + 58 + 2 + 60) * (2000 + 26 + 2 + 93) * 60 / 1000,
+@@ -1188,6 +1282,9 @@ static int nt36523_probe(struct mipi_dsi_device *dsi)
+ 	if (!pinfo->desc)
+ 		return -ENODEV;
+ 
++	if (pinfo->desc->dsc)
++		pinfo->dsc = *pinfo->desc->dsc;
++
+ 	/* If the panel is dual dsi, register DSI1 */
+ 	if (pinfo->desc->is_dual_dsi) {
+ 		info = &pinfo->desc->dsi_info;
+@@ -1229,6 +1326,7 @@ static int nt36523_probe(struct mipi_dsi_device *dsi)
+ 		pinfo->dsi[i]->lanes = pinfo->desc->lanes;
+ 		pinfo->dsi[i]->format = pinfo->desc->format;
+ 		pinfo->dsi[i]->mode_flags = pinfo->desc->mode_flags;
++		pinfo->dsi[i]->dsc = pinfo->desc->dsc ? &pinfo->dsc : NULL;
+ 
+ 		ret = devm_mipi_dsi_attach(dev, pinfo->dsi[i]);
+ 		if (ret < 0)
+@@ -1241,6 +1339,14 @@ static int nt36523_probe(struct mipi_dsi_device *dsi)
+ }
+ 
+ static const struct of_device_id nt36523_of_match[] = {
++	{
++		.compatible = "lenovo,tb371fc-boe-nt36532",
++		.data = &tb371fc_boe_desc,
++	},
++	{
++		.compatible = "lenovo,tb371fc-tianma-nt36532",
++		.data = &tb371fc_tianma_desc,
++	},
+ 	{
+ 		.compatible = "lenovo,j606f-boe-nt36523w",
+ 		.data = &j606f_boe_desc,

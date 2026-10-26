@@ -1,0 +1,132 @@
+#!/bin/sh
+
+# Exact Lenovo 4.19.157 control boot with a read-only USB log disk.  All
+# snapshots and the FAT backing file live in initramfs/tmpfs RAM.  No Android,
+# microSD or other persistent block device is mounted.
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+busybox mkdir -p /proc /sys /run /tmp /dev/pts /dev/dri /mnt/v45-logs
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+
+[ -c /dev/console ] || busybox mknod -m 600 /dev/console c 5 1
+[ -c /dev/null ] || busybox mknod -m 666 /dev/null c 1 3
+[ -c /dev/zero ] || busybox mknod -m 666 /dev/zero c 1 5
+[ -b /dev/loop0 ] || busybox mknod -m 600 /dev/loop0 b 7 0
+
+hostname tb371fc-stock-kernel-logdisk
+dmesg -n 8
+busybox mkdir -p /run/v45-snapshots
+
+capture_snapshot() {
+	label=$1
+	out=/run/v45-snapshots/$label
+	busybox mkdir -p "$out"
+	busybox uname -a >"$out/uname.txt" 2>&1
+	busybox cat /proc/cmdline >"$out/cmdline.txt" 2>&1
+	busybox cat /proc/uptime >"$out/uptime.txt" 2>&1
+	busybox cat /proc/interrupts >"$out/interrupts.txt" 2>&1
+	busybox cat /proc/iomem >"$out/iomem.txt" 2>&1
+	busybox dmesg >"$out/dmesg.txt" 2>&1
+	{
+		for node in /sys/class/regulator/regulator.*; do
+			[ -d "$node" ] || continue
+			echo "[$node]"
+			for field in name state microvolts min_microvolts max_microvolts \
+				num_users type; do
+				[ -r "$node/$field" ] || continue
+				echo "$field=$(busybox cat "$node/$field" 2>/dev/null)"
+			done
+		done
+	} >"$out/regulators.txt" 2>&1
+	{
+		for node in /sys/class/backlight/* /sys/class/graphics/* \
+			/sys/class/drm/*; do
+			[ -e "$node" ] || continue
+			echo "[$node -> $(busybox readlink -f "$node" 2>/dev/null)]"
+			for field in uevent brightness actual_brightness max_brightness \
+				bl_power state status modes enabled name dev; do
+				[ -r "$node/$field" ] || continue
+				echo "-- $field"
+				busybox cat "$node/$field" 2>/dev/null
+			done
+		done
+	} >"$out/display-sysfs.txt" 2>&1
+	{
+		for node in /sys/bus/i2c/devices/*-0011 \
+			/sys/bus/platform/devices/*dsi* \
+			/sys/bus/platform/devices/*mdss*; do
+			[ -e "$node" ] || continue
+			echo "[$node -> $(busybox readlink -f "$node" 2>/dev/null)]"
+			[ ! -r "$node/uevent" ] || busybox cat "$node/uevent"
+		done
+	} >"$out/display-devices.txt" 2>&1
+	busybox ps >"$out/processes.txt" 2>&1
+	busybox ls -l /dev/dri /dev/graphics /sys/class/backlight \
+		/sys/class/graphics /sys/class/drm >"$out/device-list.txt" 2>&1
+}
+
+echo 'V45 exact-stock control; persistent storage is not used.' \
+	>/run/v45-snapshots/README.txt
+capture_snapshot 00-before-kms
+
+for _ in $(busybox seq 1 120); do
+	[ -r /sys/class/drm/card0/dev ] && break
+	busybox sleep 1
+done
+
+if [ "$(busybox cat /sys/class/drm/card0/dev 2>/dev/null)" = 226:0 ]; then
+	[ -c /dev/dri/card0 ] || busybox mknod -m 660 /dev/dri/card0 c 226 0
+	busybox setsid /bin/drm-kms-smoketest 120 red 86400 \
+		>/run/v45-snapshots/kms-smoketest.txt 2>&1 </dev/null &
+	echo $! >/run/v45-snapshots/kms-smoketest.pid
+else
+	echo 'DRM card0 did not appear.' >/run/v45-snapshots/kms-smoketest.txt
+fi
+
+busybox sleep 5
+capture_snapshot 05-after-kms
+busybox sleep 30
+capture_snapshot 35-after-kms
+busybox sleep 30
+capture_snapshot 65-after-kms
+
+busybox cp /bin/v45-logdisk-template.img /run/tb371fc-v45-logs.img
+busybox losetup /dev/loop0 /run/tb371fc-v45-logs.img
+mount -t vfat -o rw,noatime /dev/loop0 /mnt/v45-logs
+busybox cp -a /run/v45-snapshots/. /mnt/v45-logs/
+busybox sync
+umount /mnt/v45-logs
+busybox losetup -d /dev/loop0
+
+mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
+gadget=/sys/kernel/config/usb_gadget/tb371fc_v45_logs
+busybox mkdir -p "$gadget/strings/0x409" \
+	"$gadget/configs/c.1/strings/0x409"
+echo 0x1d6b >"$gadget/idVendor"
+echo 0x0107 >"$gadget/idProduct"
+echo TB371FC-V45-LOGS >"$gadget/strings/0x409/serialnumber"
+echo TB371FC-Linux >"$gadget/strings/0x409/manufacturer"
+echo 'TB371FC read-only diagnostic logs' >"$gadget/strings/0x409/product"
+echo 'Read-only log disk' >"$gadget/configs/c.1/strings/0x409/configuration"
+busybox mkdir -p "$gadget/functions/mass_storage.0"
+echo 1 >"$gadget/functions/mass_storage.0/lun.0/ro"
+echo 1 >"$gadget/functions/mass_storage.0/lun.0/removable"
+echo 1 >"$gadget/functions/mass_storage.0/lun.0/nofua" 2>/dev/null || true
+echo /run/tb371fc-v45-logs.img >"$gadget/functions/mass_storage.0/lun.0/file"
+busybox ln -s "$gadget/functions/mass_storage.0" \
+	"$gadget/configs/c.1/mass_storage.0"
+for udc_path in /sys/class/udc/*; do
+	[ -e "$udc_path" ] || continue
+	echo "${udc_path##*/}" >"$gadget/UDC"
+	break
+done
+
+while :; do
+	busybox sleep 60
+done

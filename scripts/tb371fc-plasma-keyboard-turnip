@@ -1,0 +1,21 @@
+#!/bin/sh
+# TB371FC V56.5 diagnostic: render only Plasma Keyboard on Adreno 650.
+# KWin and display scanout remain on the existing downstream SDE profile.
+
+set -u
+
+log=/var/log/tb371fc-plasma-keyboard-turnip.log
+
+printf '\n=== %s start ===\n' "$(date -Iseconds 2>/dev/null || date)" >>"$log"
+/usr/local/bin/tb371fc-hw-run /usr/bin/plasma-keyboard "$@" 2>>"$log"
+rc=$?
+
+printf '%s hardware keyboard exited rc=%s; starting software fallback\n' \
+	"$(date -Iseconds 2>/dev/null || date)" "$rc" >>"$log"
+
+unset TB371FC_ZINK_KGSL_ALLOW_UNMATCHED
+unset MESA_LOADER_DRIVER_OVERRIDE GALLIUM_DRIVER
+unset VK_ICD_FILENAMES VK_DRIVER_FILES TU_DEBUG MESA_VK_WSI_DEBUG
+unset LIBGL_DRIVERS_PATH __EGL_VENDOR_LIBRARY_FILENAMES LD_LIBRARY_PATH
+export LIBGL_ALWAYS_SOFTWARE=1
+exec /usr/bin/plasma-keyboard "$@"

@@ -1,0 +1,139 @@
+From: TB371FC Linux bring-up <tb371fc@example.invalid>
+Subject: [PATCH] arm64: tb371fc: trace early start_kernel
+
+Use the r11 identity-mapped splash buffer to localize the first C-language
+boot steps. The final band is repainted through start_kernel and the portion
+of setup_arch before cpu_uninstall_idmap(). Diagnostic-only instrumentation.
+---
+ arch/arm64/kernel/setup.c | 36 ++++++++++++++++++++++++++++++++++++
+ init/main.c               | 24 ++++++++++++++++++++++++
+ 2 files changed, 60 insertions(+)
+
+diff --git a/arch/arm64/kernel/setup.c b/arch/arm64/kernel/setup.c
+--- a/arch/arm64/kernel/setup.c
++++ b/arch/arm64/kernel/setup.c
+@@ -277,9 +277,27 @@ u64 cpu_logical_map(unsigned int cpu)
+ {
+ 	return __cpu_logical_map[cpu];
+ }
+ 
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++void __init __no_sanitize_address tb371fc_start_kernel_fb_marker(u32 color)
++{
++	volatile u32 *pixel = (volatile u32 *)0x9d140000UL;
++	unsigned long remaining = 2944UL * 256UL;
++
++	while (remaining--)
++		*pixel++ = color;
++
++	asm volatile("dsb sy" ::: "memory");
++}
++#endif
++
+ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ {
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 21: setup_arch was entered (lime). */
++	tb371fc_start_kernel_fb_marker(0xff80ff00);
++#endif
++
+ 	setup_initial_init_mm(_text, _etext, _edata, _end);
+ 
+ 	*cmdline_p = boot_command_line;
+@@ -288,8 +306,16 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 
+ 	early_fixmap_init();
+ 	early_ioremap_init();
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 22: early fixmap and ioremap are initialized (cyan). */
++	tb371fc_start_kernel_fb_marker(0xff00ffff);
++#endif
+ 
+ 	setup_machine_fdt(__fdt_pointer);
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 23: the flattened device tree was accepted (yellow). */
++	tb371fc_start_kernel_fb_marker(0xffffff00);
++#endif
+ 
+ 	/*
+ 	 * Initialise the static keys early as they may be enabled by the
+@@ -299,6 +328,11 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 	parse_early_param();
+ 
+ 	dynamic_scs_init();
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 24: early parameters and dynamic SCS completed (magenta). */
++	tb371fc_start_kernel_fb_marker(0xffff00ff);
++#endif
++
+ 
+ 	/*
+ 	 * The primary CPU enters the kernel with all DAIF exceptions masked.
+@@ -312,6 +346,11 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 	 * detected and initialized.
+ 	 */
+ 	local_daif_restore(DAIF_PROCCTX_NOIRQ);
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 25: Debug and SError are unmasked; idmap removal is next (pink). */
++	tb371fc_start_kernel_fb_marker(0xffff80c0);
++#endif
++
+ 
+ 	/*
+ 	 * TTBR0 is only used for the identity mapping at this stage. Make it
+diff --git a/init/main.c b/init/main.c
+--- a/init/main.c
++++ b/init/main.c
+@@ -968,18 +968,36 @@ static void __init print_kernel_cmdline(const char *cmdline)
+ 		pr_notice("%s%s\n", KERNEL_CMDLINE_PREFIX, cmdline);
+ }
+ 
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++extern void __init tb371fc_start_kernel_fb_marker(u32 color);
++#define TB371FC_START_MARKER(color) tb371fc_start_kernel_fb_marker(color)
++#else
++#define TB371FC_START_MARKER(color) do { } while (0)
++#endif
++
+ asmlinkage __visible __init __no_sanitize_address __noreturn __no_stack_protector
+ void start_kernel(void)
+ {
+ 	char *command_line;
+ 	char *after_dashes;
+ 
++	/* Stage 14: start_kernel was entered (maroon). */
++	TB371FC_START_MARKER(0xff800000);
++
+ 	set_task_stack_end_magic(&init_task);
++	/* Stage 15: init_task stack metadata is writable (dark green). */
++	TB371FC_START_MARKER(0xff008000);
+ 	smp_setup_processor_id();
++	/* Stage 16: the boot CPU ID was established (navy). */
++	TB371FC_START_MARKER(0xff000080);
+ 	debug_objects_early_init();
+ 	init_vmlinux_build_id();
++	/* Stage 17: early debug objects and build ID completed (orange). */
++	TB371FC_START_MARKER(0xffffa500);
+ 
+ 	cgroup_init_early();
++	/* Stage 18: early cgroup initialization completed (purple). */
++	TB371FC_START_MARKER(0xff800080);
+ 
+ 	local_irq_disable();
+ 	early_boot_irqs_disabled = true;
+@@ -990,7 +1008,13 @@ void start_kernel(void)
+ 	 */
+ 	boot_cpu_init();
+ 	page_address_init();
++	/* Stage 19: boot CPU and page-address setup completed (gray). */
++	TB371FC_START_MARKER(0xff808080);
++
+ 	pr_notice("%s", linux_banner);
++	/* Stage 20: the first kernel banner printk returned (white). */
++	TB371FC_START_MARKER(0xfff5f5f5);
++
+ 	setup_arch(&command_line);
+ 	mm_core_init_early();
+ 	/* Static keys and static calls are needed by LSMs */
+-- 
+2.45.2

@@ -1,0 +1,54 @@
+#!/bin/sh
+
+set -eu
+
+payload=/run/tb371fc-rescue/linux-6.12-r38
+state=/run/tb371fc-linux612-r38.state
+log=/run/tb371fc-linux612-r38-load.log
+kexec=/run/tb371fc-rescue/kexec
+bb=/run/tb371fc-rescue/busybox
+
+[ -x "$bb" ] || bb=busybox
+[ -x "$kexec" ] || { echo 'r38: kexec is unavailable' >&2; exit 1; }
+
+verify_file() {
+	file=$1
+	expected=$2
+	[ -s "$file" ] || { echo "r38: missing $file" >&2; exit 1; }
+	actual=$("$bb" sha256sum "$file" | "$bb" awk '{print $1}')
+	[ "$actual" = "$expected" ] || {
+		echo "r38: SHA-256 mismatch for $file" >&2
+		echo "expected $expected" >&2
+		echo "actual   $actual" >&2
+		exit 1
+	}
+}
+
+verify_file "$payload/Image" c4e886b89865dd5043ecda88e3b9255c323cf722b21d941efaae8d12cf76e4bd
+verify_file "$payload/board.dtb" caa9598e88b9b4a39d39916651d306824e2f44d8325822e510bcb6d0cede357c
+verify_file "$payload/initramfs.cpio.gz" c807299d26b83c2d585a1ae8402dfbb68852a647ed153bf190123e9a7048dd9c
+
+cmdline='console=tty0 fbcon=font:TER16x32 earlycon=qcom_geni,0x988000 keep_bootcon ignore_loglevel loglevel=8 log_buf_len=8M rdinit=/init root=/dev/ram0 rw fw_devlink=permissive clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=-1 swiotlb=2048 maxcpus=1 nr_cpus=1 reset_devices'
+
+"$kexec" -u 2>/dev/null || true
+if "$kexec" -c -l "$payload/Image" \
+	--dtb="$payload/board.dtb" \
+	--initrd="$payload/initramfs.cpio.gz" \
+	--append="$cmdline" >"$log" 2>&1; then
+	{
+		echo '=== kexec output ==='
+		cat "$log"
+		echo '=== iomem after load ==='
+		cat /proc/iomem
+		echo '=== loaded flag ==='
+		cat /sys/kernel/kexec_loaded 2>/dev/null || true
+	} >"$log.snapshot"
+	echo loaded >"$state"
+	echo 'r38: Linux 6.12 payload verified and loaded, NOT executed.'
+	echo 'r38: run /run/tb371fc-rescue/execute-linux-6.12-r38 explicitly.'
+	exit 0
+fi
+
+echo load-failed >"$state"
+cat "$log" >&2
+exit 1

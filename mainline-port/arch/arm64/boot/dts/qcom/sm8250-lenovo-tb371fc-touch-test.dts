@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Temporary, non-installable TB371FC touch/AP500U bring-up variant.
+ *
+ * Keep the normal board DTB conservative. This variant only enables QUPv3
+ * SE14 and the Novatek child whose wiring and firmware were recovered from
+ * stock ZUI. It is intended for `fastboot boot` diagnostics, never flashing.
+ */
+
+#include "sm8250-lenovo-tb371fc.dts"
+
+/ {
+	model = "Lenovo Xiaoxin Pad Pro 12.7 TB371FC (touch diagnostic)";
+};
+
+&spi14 {
+	status = "okay";
+};
+
+&touchscreen {
+	status = "okay";
+};

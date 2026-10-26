@@ -1,0 +1,88 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Minimal TB371FC mainline boot diagnostic.
+ *
+ * This intentionally starts from the upstream SM8250 HDK power description
+ * and enables only the debug UART and the primary USB controller.  It is a
+ * bring-up artifact, never the normal hardware description or an install DTB.
+ */
+
+#include "sm8250-hdk.dts"
+
+/ {
+	model = "Lenovo TB371FC stage-0 mainline diagnostic";
+	compatible = "lenovo,tb371fc", "qcom,sm8250";
+
+	/* Match the active stock Kona v2.1 base DTB. */
+	qcom,msm-id = <0x164 0x20001>;
+	qcom,board-id = <0 0>;
+
+	aliases {
+		serial0 = &uart2;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+		bootargs = "earlycon=qcom_geni,0x988000 console=ttyMSM0,115200n8 keep_bootcon ignore_loglevel initcall_debug";
+	};
+};
+
+/* The stock DT's serial0 is QUPv3 wrapper 0, serial engine 2 at 0x988000. */
+&qupv3_id_0 {
+	status = "okay";
+};
+
+&uart2 {
+	status = "okay";
+};
+
+&qupv3_id_1 {
+	status = "disabled";
+};
+
+&uart12 {
+	status = "disabled";
+};
+
+/* Keep the first diagnostic independent of storage and unrelated engines. */
+&gmu {
+	status = "disabled";
+};
+
+&gpu {
+	status = "disabled";
+};
+
+&gpu_zap_shader {
+	status = "disabled";
+};
+
+&ufs_mem_hc {
+	status = "disabled";
+};
+
+&ufs_mem_phy {
+	status = "disabled";
+};
+
+&usb_2 {
+	status = "disabled";
+};
+
+&usb_2_hsphy {
+	status = "disabled";
+};
+
+&usb_2_qmpphy {
+	status = "disabled";
+};
+
+&venus {
+	status = "disabled";
+};
+
+/* Avoid a Type-C policy dependency while proving kernel -> initramfs entry. */
+&usb_1_dwc3 {
+	dr_mode = "peripheral";
+/delete-property/ usb-role-switch;
+};

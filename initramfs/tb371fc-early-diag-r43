@@ -1,0 +1,91 @@
+#!/bin/sh
+
+# Early, self-contained TB371FC Linux 6.12 diagnostic collector.  It never
+# mounts an Android/UFS partition.  Persistent output is written only to the
+# user-provided microSD card (/dev/mmcblk0p1).
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+diag_root=/run/tb371fc-r43
+diag_mount=/mnt/tb371fc-r43-sd
+
+capture_file() {
+	name=$1
+	path=$2
+	[ -r "$path" ] || return 0
+	busybox cat "$path" >"$diag_root/$name" 2>&1 || true
+}
+
+capture_tree() {
+	name=$1
+	path=$2
+	[ -e "$path" ] || return 0
+	busybox find "$path" -maxdepth 4 -print >"$diag_root/$name" 2>&1 || true
+}
+
+capture() {
+	phase=${1:-unknown}
+	busybox mkdir -p "$diag_root"
+	printf '%s\n' "$phase" >"$diag_root/last-phase.txt"
+	busybox date >"$diag_root/date.txt" 2>&1 || true
+	busybox uname -a >"$diag_root/uname.txt" 2>&1 || true
+	busybox dmesg >"$diag_root/dmesg-$phase.txt" 2>&1 || true
+	busybox dmesg | busybox grep -Ei \
+		'drm|msm|dpu|dsi|panel|simplefb|framebuffer|adreno|a6xx|gmu|gpu|firmware|smmu|iommu|clk|regulator|usb|dwc3|mmc|panic|oops|fault|error|failed' \
+		>"$diag_root/dmesg-filtered-$phase.txt" 2>&1 || true
+	capture_file proc-cmdline.txt /proc/cmdline
+	capture_file proc-cpuinfo.txt /proc/cpuinfo
+	capture_file proc-iomem.txt /proc/iomem
+	capture_file proc-interrupts.txt /proc/interrupts
+	capture_file proc-meminfo.txt /proc/meminfo
+	capture_file proc-modules.txt /proc/modules
+	capture_file dt-model.txt /proc/device-tree/model
+	capture_file dt-compatible.bin /proc/device-tree/compatible
+	capture_file dt-bootargs.txt /proc/device-tree/chosen/bootargs
+	capture_file clk-summary.txt /sys/kernel/debug/clk/clk_summary
+	capture_file regulator-summary.txt /sys/kernel/debug/regulator/regulator_summary
+	capture_tree sys-class-drm.txt /sys/class/drm
+	capture_tree sys-class-graphics.txt /sys/class/graphics
+	capture_tree sys-class-net.txt /sys/class/net
+	capture_tree sys-class-block.txt /sys/class/block
+	capture_tree sys-debug-dri.txt /sys/kernel/debug/dri
+	capture_tree sys-iommu-groups.txt /sys/kernel/iommu_groups
+	capture_tree sys-platform-devices.txt /sys/bus/platform/devices
+	if [ -r /sys/firmware/fdt ]; then
+		busybox cp /sys/firmware/fdt "$diag_root/running-fdt.dtb" 2>/dev/null || true
+	fi
+	if [ -d /sys/fs/pstore ]; then
+		busybox find /sys/fs/pstore -maxdepth 1 -type f -print \
+			>"$diag_root/pstore-files.txt" 2>&1 || true
+		for item in /sys/fs/pstore/*; do
+			[ -f "$item" ] || continue
+			busybox cp "$item" "$diag_root/pstore-$(busybox basename "$item")" 2>/dev/null || true
+		done
+	fi
+	busybox sync
+}
+
+persist() {
+	phase=${1:-unknown}
+	busybox mkdir -p "$diag_root" "$diag_mount"
+	printf '%s\n' "$phase" >"$diag_root/persist-phase.txt"
+	for attempt in $(busybox seq 1 20); do
+		[ -e /sys/class/block/mmcblk0p1/dev ] && break
+		busybox sleep 1
+	done
+	[ -e /sys/class/block/mmcblk0p1/dev ] || return 1
+	[ -b /dev/mmcblk0p1 ] || busybox mknod -m 600 /dev/mmcblk0p1 b 179 1
+	busybox mount -t exfat -o rw,noatime /dev/mmcblk0p1 "$diag_mount" 2>/dev/null || return 1
+	destination="$diag_mount/tb371fc-linux/logs/r43-last"
+	busybox mkdir -p "$destination"
+	busybox cp -a "$diag_root/." "$destination/" 2>/dev/null || true
+	printf '%s\n' "$phase" >"$destination/persist-complete.txt"
+	busybox sync
+	busybox umount "$diag_mount" 2>/dev/null || true
+	return 0
+}
+
+case "${1:-capture}" in
+	capture) capture "${2:-manual}" ;;
+	persist) persist "${2:-manual}" ;;
+	*) echo "usage: $0 capture|persist [phase]" >&2; exit 2 ;;
+esac

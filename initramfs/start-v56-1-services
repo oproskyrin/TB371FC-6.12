@@ -1,0 +1,563 @@
+#!/bin/sh
+# Start V56 WLAN and KDE only after the authenticated serial rescue path.
+set -u
+
+# Persistent overrides must declare the same API before development-init will
+# replace the service bundled in recovery. This prevents an older experiment
+# on microSD from silently overriding a newer recovery image.
+TB371FC_V56_SERVICE_OVERRIDE_API=3
+
+bb=/run/tb371fc-rescue/busybox
+log=/var/log/tb371fc-v56-1-services.log
+kernel_release=$(uname -r)
+wlan_sentinel=/run/tb371fc-v56-1-wlan-activation-used
+wlan_log_dir=/var/log/tb371fc-wlan-v56-1
+build_label=V56.1
+plasma_pid=
+
+exec >>"$log" 2>&1
+
+screen_status() {
+	[ -c /dev/tty0 ] || return 0
+	"$bb" printf '%s\n' "$1" >/dev/tty0
+}
+
+restore_console() {
+	screen_status "[TB371FC $build_label] KDE unavailable; restoring safe console"
+	/usr/bin/chvt 1 2>/dev/null || true
+	for bind in /sys/class/vtconsole/vtcon*/bind; do
+		[ -w "$bind" ] || continue
+		echo 1 >"$bind" 2>/dev/null || true
+	done
+	"$bb" printf '\033[2J\033[H' >/dev/tty0 2>/dev/null || true
+	screen_status "TB371FC ARCH LINUX $build_label - SAFE CONSOLE"
+	screen_status "Serial SSH remains available. See $log"
+}
+
+stop_plasma_session() {
+	# dbus-run-session does not reliably reap or terminate its children in this
+	# initramfs-owned PID-1 environment.  An accelerated KWin failure previously
+	# left KWin and plasma-keyboard holding DRM master, which also blocked sync
+	# and reboot.  Terminate the known session processes explicitly.
+	for signal in TERM KILL; do
+		for name in plasmashell plasma-keyboard kwin_wayland plasma_session \
+			startplasma-wayland; do
+			/usr/bin/pgrep -x "$name" 2>/dev/null | while read -r pid; do
+				[ -n "$pid" ] && kill -"$signal" "$pid" 2>/dev/null || true
+			done
+		done
+		for pattern in \
+			'^/usr/bin/kwin_wayland_wrapper( |$)' \
+			'^/usr/bin/dbus-run-session -- /usr/bin/startplasma-wayland$'; do
+			/usr/bin/pgrep -f "$pattern" 2>/dev/null | while read -r pid; do
+				[ -n "$pid" ] && kill -"$signal" "$pid" 2>/dev/null || true
+			done
+		done
+		[ -z "$plasma_pid" ] || kill -"$signal" "$plasma_pid" 2>/dev/null || true
+		sleep 2
+	done
+}
+
+retry_with_software_renderer() {
+	reason=$1
+	[ -e /etc/tb371fc/enable-v56-hardware-gl ] || return 1
+	echo "Hardware Plasma failed: $reason"
+	screen_status "[TB371FC $build_label] GPU profile failed; retrying llvmpipe"
+	stop_plasma_session
+	rm -f /etc/tb371fc/enable-v56-hardware-gl
+	echo "$reason" >/var/log/tb371fc-hardware-gl-fallback-reason.txt
+	# Replace this service process so WLAN, DRM and session state are validated
+	# again from a known path. Existing network daemons are detected and reused.
+	exec "$0"
+}
+
+capture_wlan_state() {
+	label=$1
+	mkdir -p "$wlan_log_dir"
+	{
+		echo "=== WLAN $label ==="
+		date 2>/dev/null || true
+		/usr/bin/ip -details link 2>&1 || true
+		/usr/bin/iw dev 2>&1 || true
+		cat /proc/net/wireless 2>/dev/null || true
+		dmesg | grep -Ei 'wlan|qcacld|hdd|cnss|mhi|qmi|firmware|wcnss|qca6390' || true
+	} >"$wlan_log_dir/$label.txt" 2>&1
+	sync
+}
+
+activate_wlan_once() {
+	[ ! -e "$wlan_sentinel" ] || return 1
+	grep -Fqx 'CONFIG_CNSS2_DIAGNOSTIC_NO_SSR=y' /proc/config.gz 2>/dev/null || \
+		"$bb" zcat /proc/config.gz 2>/dev/null | \
+		grep -Fqx 'CONFIG_CNSS2_DIAGNOSTIC_NO_SSR=y' || return 1
+	"$bb" zcat /proc/config.gz 2>/dev/null | \
+		grep -Fqx 'CONFIG_CNSS2_DIAGNOSTIC_SINGLE_QMI_CLIENT=y' || return 1
+
+	device_number=$(cat /sys/class/wlan/wlan/dev 2>/dev/null || true)
+	case "$device_number" in
+		[0-9]*:[0-9]*) ;;
+		*) echo "Unexpected WLAN device number: $device_number"; return 1 ;;
+	esac
+	major=${device_number%%:*}
+	minor=${device_number##*:}
+	[ -c /dev/wlan ] || "$bb" mknod -m 600 /dev/wlan c "$major" "$minor"
+
+	qrtr_ready=0
+	for _ in $("$bb" seq 1 30); do
+		if "$bb" pidof qrtr-ns >/dev/null 2>&1 &&
+			grep -Eq 'WCNSS|service' /run/qrtr-lookup.log 2>/dev/null; then
+			qrtr_ready=1
+			break
+		fi
+		sleep 1
+	done
+	[ "$qrtr_ready" = 1 ] || {
+		echo 'WCNSS QRTR service was not observed; activation skipped.'
+		return 1
+	}
+
+	ini=/usr/lib/firmware/wlan/qca_cld/WCNSS_qcom_cfg.ini
+	expected=ceebfa9bd1226ec748ecf28c5ed5543cb184fd8a55dd34ac1611300903598b17
+	actual=$("$bb" sha256sum "$ini" 2>/dev/null | "$bb" awk '{print $1}')
+	[ "$actual" = "$expected" ] || {
+		echo "Unexpected WLAN INI hash: $actual"
+		return 1
+	}
+
+	mkdir -p "$wlan_log_dir"
+	: >"$wlan_sentinel"
+	capture_wlan_state before
+	(
+		for _ in $("$bb" seq 1 60); do
+			dmesg >"$wlan_log_dir/dmesg-live.txt" 2>&1
+			sync
+			sleep 2
+		done
+	) &
+	logger_pid=$!
+	"$bb" timeout 90 "$bb" sh -c "printf 'ON\\n' >/dev/wlan" \
+		>"$wlan_log_dir/activation-write.txt" 2>&1 || true
+	kill "$logger_pid" 2>/dev/null || true
+	capture_wlan_state after
+	[ -e /sys/class/net/wlan0 ]
+}
+
+connect_wlan_without_udev() {
+	/usr/bin/ip -4 -o address show wlan0 2>/dev/null | \
+		grep -q ' inet ' && return 0
+	profile=/etc/NetworkManager/system-connections/tb371fc-home.nmconnection
+	[ -r "$profile" ] || return 1
+	for executable in /usr/bin/wpa_supplicant /usr/bin/wpa_cli \
+		/usr/bin/dhcpcd; do
+		[ -x "$executable" ] || return 1
+	done
+
+	ssid=$(sed -n 's/^ssid=//p' "$profile" | head -n 1)
+	psk=$(sed -n 's/^psk=//p' "$profile" | head -n 1)
+	[ "$ssid" = Home ] || return 1
+	[ -n "$psk" ] || return 1
+	umask 077
+	{
+		echo 'ctrl_interface=/run/wpa_supplicant'
+		echo 'update_config=0'
+		echo 'network={'
+		printf '    ssid="%s"\n' "$ssid"
+		printf '    psk="%s"\n' "$psk"
+		echo '    key_mgmt=WPA-PSK'
+		echo '    scan_ssid=1'
+		echo '}'
+	} >/run/tb371fc-wpa.conf
+	unset psk
+
+	mkdir -p /run/wpa_supplicant /run/systemd/resolve
+	/usr/bin/ip link set wlan0 up
+	/usr/bin/wpa_supplicant -B -P /run/tb371fc-wpa.pid \
+		-f /var/log/tb371fc-wpa.log -i wlan0 -D nl80211 \
+		-c /run/tb371fc-wpa.conf
+	for _ in $("$bb" seq 1 30); do
+		state=$(/usr/bin/wpa_cli -i wlan0 status 2>/dev/null | \
+			sed -n 's/^wpa_state=//p')
+		[ "$state" = COMPLETED ] && break
+		sleep 1
+	done
+	[ "$state" = COMPLETED ] || return 1
+	/usr/bin/dhcpcd -4 -b wlan0
+	for _ in $("$bb" seq 1 30); do
+		/usr/bin/ip -4 -o address show wlan0 | grep -q ' inet ' && return 0
+		sleep 1
+	done
+	return 1
+}
+
+case "$kernel_release" in
+	4.19.157-perf-v56.1*) ;;
+	4.19.157-perf-v56.2*) build_label=V56.2 ;;
+	4.19.157-perf-v56.3*) build_label=V56.3 ;;
+	4.19.157-perf-v56.4*) build_label=V56.4 ;;
+	4.19.157-perf-v56.5*) build_label=V56.5 ;;
+	# V56.7 deliberately inherits the proven V56.5 userspace path.  Its
+	# kernel-only change exports the panel's logical 120/60 Hz clocks to DRM.
+	4.19.157-perf-v56.7*) build_label=V56.7 ;;
+	# V56.8 is the strict regression control: keep the same userspace and
+	# diagnostics while reverting only the V56.7 logical DSI clock export.
+	4.19.157-perf-v56.8*) build_label=V56.8 ;;
+	*)
+		echo "Refusing V56 services on unexpected kernel: $kernel_release"
+		exit 2
+		;;
+esac
+
+if [ "$build_label" = V56.2 ] || [ "$build_label" = V56.3 ] || \
+		[ "$build_label" = V56.4 ] || [ "$build_label" = V56.5 ] || \
+		[ "$build_label" = V56.7 ] || [ "$build_label" = V56.8 ]; then
+	"$bb" zcat /proc/config.gz 2>/dev/null | \
+		grep -Fqx 'CONFIG_FHANDLE=y' || {
+		echo "$build_label requires CONFIG_FHANDLE=y for libudev."
+		exit 2
+	}
+fi
+if [ "$build_label" = V56.3 ] || [ "$build_label" = V56.4 ] || \
+		[ "$build_label" = V56.5 ] || [ "$build_label" = V56.7 ] || \
+		[ "$build_label" = V56.8 ]; then
+	"$bb" zcat /proc/config.gz 2>/dev/null | \
+		grep -Fqx 'CONFIG_KEXEC=y' || {
+		echo "$build_label requires CONFIG_KEXEC=y for the Linux 7.x RAM bridge."
+		exit 2
+	}
+fi
+
+if [ -e /etc/tb371fc/disable-v56-kde ]; then
+	echo 'KDE disabled by /etc/tb371fc/disable-v56-kde.'
+	screen_status "[TB371FC $build_label] KDE disabled; console and SSH only"
+	exit 0
+fi
+
+screen_status "[TB371FC $build_label] Rescue SSH ready; starting guarded WLAN"
+
+if ! grep -q '^wlan ' /proc/modules 2>/dev/null; then
+	if [ -s /run/tb371fc-rescue/wlan-v56.ko ]; then
+		/usr/bin/insmod /run/tb371fc-rescue/wlan-v56.ko || \
+			echo 'wlan.ko insertion failed; KDE startup will continue.'
+	else
+		echo "$build_label wlan.ko is missing from the preserved initramfs."
+	fi
+fi
+
+mkdir -p /run/dbus /run/NetworkManager/conf.d
+mkdir -p /run/systemd/resolve
+if [ "$build_label" = V56.2 ] || [ "$build_label" = V56.3 ] || \
+		[ "$build_label" = V56.4 ] || [ "$build_label" = V56.5 ] || \
+		[ "$build_label" = V56.7 ] || [ "$build_label" = V56.8 ]; then
+	if ! grep -Eq '^[0-9a-f]{32}$' /etc/machine-id 2>/dev/null; then
+		/usr/bin/dbus-uuidgen >/etc/machine-id
+	fi
+	mkdir -p /run/udev
+	if ! /usr/bin/pgrep -f '[s]ystemd-udevd' >/dev/null 2>&1; then
+		/usr/lib/systemd/systemd-udevd --daemon || \
+			echo 'systemd-udevd startup failed.'
+	fi
+	sleep 2
+	/usr/bin/udevadm trigger --action=add || true
+	/usr/bin/udevadm settle --timeout=20 || true
+fi
+if ! /usr/bin/pgrep -f '[d]bus-daemon.*--system' >/dev/null 2>&1; then
+	/usr/bin/dbus-uuidgen --ensure=/etc/machine-id || true
+	/usr/bin/dbus-daemon --system --fork --nopidfile || \
+		echo 'System D-Bus startup failed.'
+fi
+
+cat >/run/NetworkManager/conf.d/10-tb371fc-rescue-unmanaged.conf <<'EOF'
+[keyfile]
+unmanaged-devices=interface-name:usb0;interface-name:ttyGS0
+EOF
+
+if ! /usr/bin/pgrep -x NetworkManager >/dev/null 2>&1; then
+	/usr/bin/NetworkManager --no-daemon >>/var/log/tb371fc-networkmanager.log 2>&1 &
+	echo $! >/run/tb371fc-networkmanager.pid
+fi
+
+if [ ! -e /sys/class/net/wlan0 ] && [ -c /dev/wlan -o -e /sys/class/wlan/wlan/dev ]; then
+	activate_wlan_once &
+	echo $! >/run/tb371fc-v56-1-wlan-activation.pid
+fi
+
+wlan_ready=0
+for _ in $("$bb" seq 1 120); do
+	if [ -e /sys/class/net/wlan0 ]; then
+		wlan_ready=1
+		break
+	fi
+	sleep 1
+done
+if [ "$wlan_ready" = 1 ]; then
+	screen_status "[TB371FC $build_label] WLAN detected; connecting"
+	/usr/bin/ip link set wlan0 up 2>/dev/null || true
+	/usr/bin/nmcli device set wlan0 managed yes 2>/dev/null || true
+	/usr/bin/nmcli radio wifi on || true
+	/usr/bin/nmcli connection up id tb371fc-home 2>/dev/null || true
+	state=
+	for _ in $("$bb" seq 1 60); do
+		state=$(/usr/bin/nmcli -t -f DEVICE,STATE device status 2>/dev/null | \
+			grep '^wlan0:' || true)
+		[ "$state" = wlan0:connected ] && break
+		sleep 1
+	done
+	if [ "$state" != wlan0:connected ] && \
+		{ [ "$build_label" = V56.2 ] || [ "$build_label" = V56.3 ] || \
+			[ "$build_label" = V56.4 ] || [ "$build_label" = V56.5 ] || \
+			[ "$build_label" = V56.7 ] || [ "$build_label" = V56.8 ]; }; then
+		echo 'NetworkManager did not connect; trying bounded direct WPA fallback.'
+		connect_wlan_without_udev || true
+	fi
+	/usr/bin/nmcli -t -f DEVICE,TYPE,STATE device status || true
+	/usr/bin/ip -4 -o address show scope global || true
+else
+	echo 'wlan0 did not appear within the guarded activation window.'
+	screen_status "[TB371FC $build_label] WLAN unavailable; continuing to KDE"
+fi
+
+configure_runtime_dns() {
+	mkdir -p /run/systemd/resolve
+	chown root:root /run/systemd/resolve 2>/dev/null || true
+	chmod 0755 /run/systemd/resolve
+	gateway=$(/usr/bin/ip route show default dev wlan0 2>/dev/null | \
+		"$bb" awk '/^default via / { print $3; exit }')
+	{
+		[ -z "$gateway" ] || echo "nameserver $gateway"
+		echo 'nameserver 1.1.1.1'
+		echo 'options timeout:2 attempts:2'
+	} >/run/systemd/resolve/resolv.conf
+	chmod 0644 /run/systemd/resolve/resolv.conf
+}
+
+configure_runtime_dns
+
+ln -snf /usr/share/zoneinfo/Asia/Yekaterinburg /etc/localtime
+if /usr/bin/ip -4 -o address show wlan0 2>/dev/null | grep -q ' inet '; then
+	if [ -x /usr/local/sbin/tb371fc-sync-http-time ]; then
+		/usr/local/sbin/tb371fc-sync-http-time || \
+			echo 'HTTP Date bootstrap failed; leaving the current clock unchanged.'
+	else
+		echo 'HTTP Date bootstrap helper is missing; leaving the current clock unchanged.'
+	fi
+fi
+
+if [ -x /usr/bin/kwriteconfig6 ]; then
+	/usr/bin/kwriteconfig6 --file kscreenlockerrc --group Daemon \
+		--key Autolock false
+	/usr/bin/kwriteconfig6 --file kscreenlockerrc --group Daemon \
+		--key LockOnResume false
+	/usr/bin/kwriteconfig6 --file kscreenlockerrc --group Daemon \
+		--key Timeout 0
+	# Keep the software-composited recovery desktop responsive. These effects
+	# trigger expensive full-screen repaints on the high-resolution DSI panel.
+	for effect in colorpicker highlightwindow outputlocator overview \
+		shakecursor startupfeedback tileseditor windowview zoom; do
+		/usr/bin/kwriteconfig6 --file kwinrc --group Plugins \
+			--key "${effect}Enabled" false
+	done
+	# KWin only creates the Wayland input-method channel when a concrete
+	# virtual-keyboard desktop file is selected before KWin starts.
+	if [ -x /usr/bin/plasma-keyboard ] && \
+		[ -r /usr/share/applications/org.kde.plasma.keyboard.desktop ]; then
+		/usr/bin/kwriteconfig6 --file kwinrc --group Wayland \
+			--key InputMethod \
+			/usr/share/applications/org.kde.plasma.keyboard.desktop
+		/usr/bin/kwriteconfig6 --file kwinrc --group Wayland \
+			--key VirtualKeyboardMode 2
+	fi
+fi
+
+for executable in /usr/bin/startplasma-wayland /usr/bin/kwin_wayland \
+	/usr/bin/dbus-run-session /usr/bin/seatd; do
+	[ -x "$executable" ] || {
+		echo "Missing KDE executable: $executable"
+		restore_console
+		exit 3
+	}
+done
+[ -c /dev/dri/card0 ] || {
+	echo 'Missing /dev/dri/card0.'
+	restore_console
+	exit 4
+}
+
+connector_status=/sys/class/drm/card0-DSI-1/status
+connector_enabled=/sys/class/drm/card0-DSI-1/enabled
+[ -r "$connector_status" ] && [ "$(cat "$connector_status")" = connected ] || {
+	echo 'Internal DSI connector is not connected.'
+	restore_console
+	exit 5
+}
+
+mkdir -p /run/user/0
+chmod 0700 /run/user/0
+if [ ! -S /run/seatd.sock ]; then
+	/usr/bin/seatd -u root -g video -l info \
+		>>/var/log/tb371fc-seatd.log 2>&1 &
+	echo $! >/run/tb371fc-seatd.pid
+	sleep 2
+fi
+
+screen_status "[TB371FC $build_label] Starting KDE Plasma Wayland"
+(
+	export HOME=/root USER=root LOGNAME=root
+	export XDG_RUNTIME_DIR=/run/user/0
+	export XDG_SEAT=seat0
+	export XDG_SESSION_TYPE=wayland
+	export XDG_SESSION_DESKTOP=KDE
+	export XDG_CURRENT_DESKTOP=KDE
+	export LIBSEAT_BACKEND=seatd
+	export KWIN_DRM_DEVICES=/dev/dri/card0
+	export KWIN_DRM_NO_DIRECT_SCANOUT=1
+	export PLASMA_USE_QT_SCALING=1
+	export QT_IM_MODULE=qtvirtualkeyboard
+	# KScreen owns the display scale. A second global Qt multiplier made the
+	# desktop exceed the panel bounds and distorted touch coordinates.
+	export QT_SCALE_FACTOR=1
+	kgsl_icd=/opt/tb371fc-mesa-kgsl-26.1.7/share/vulkan/icd.d/freedreno_icd.aarch64.json
+	if [ -e /etc/tb371fc/enable-v56-hardware-gl ] && [ -s "$kgsl_icd" ]; then
+		unset LIBGL_ALWAYS_SOFTWARE
+		export MESA_LOADER_DRIVER_OVERRIDE=zink
+		export GALLIUM_DRIVER=zink
+		export VK_ICD_FILENAMES="$kgsl_icd"
+		# Keep Qt Quick on its OpenGL RHI so KWin composites the shell.  Zink
+		# translates that OpenGL stream to Turnip/KGSL on the Adreno 650.
+		export KWIN_COMPOSE=O2ES
+		export QSG_RHI_BACKEND=opengl
+		export QSG_RENDER_LOOP=basic
+	else
+		export LIBGL_ALWAYS_SOFTWARE=1
+	fi
+	exec /usr/bin/dbus-run-session -- /usr/bin/startplasma-wayland
+) >>/var/log/tb371fc-plasma-v56-1.log 2>&1 &
+plasma_pid=$!
+echo "$plasma_pid" >/run/tb371fc-plasma-v56.pid
+
+kwin_seen=0
+for _ in $("$bb" seq 1 60); do
+	if ! kill -0 "$plasma_pid" 2>/dev/null; then
+		echo 'Plasma exited during startup.'
+		retry_with_software_renderer plasma-exited-during-startup || true
+		stop_plasma_session
+		restore_console
+		exit 6
+	fi
+	if /usr/bin/pgrep -x kwin_wayland >/dev/null 2>&1; then
+		kwin_seen=1
+		break
+	fi
+	sleep 1
+done
+[ "$kwin_seen" = 1 ] || {
+	echo 'KWin did not appear within 60 seconds.'
+	retry_with_software_renderer kwin-start-timeout || true
+	stop_plasma_session
+	restore_console
+	exit 7
+}
+
+display_enabled=0
+for _ in $("$bb" seq 1 45); do
+	if [ -r "$connector_enabled" ] && [ "$(cat "$connector_enabled")" = enabled ]; then
+		display_enabled=1
+		break
+	fi
+	sleep 1
+done
+if [ "$display_enabled" != 1 ]; then
+	echo 'KWin is running but the kernel DSI connector remained disabled.'
+	dmesg | tail -n 300 > /var/log/tb371fc-v56-1-drm-failure.log 2>&1
+	echo drm-not-enabled >/run/tb371fc-v56-kde-status
+	retry_with_software_renderer dsi-connector-disabled || true
+	stop_plasma_session
+	restore_console
+	exit 8
+fi
+
+# startplasma can wait forever when xdg-desktop-portal-kde times out under the
+# initramfs-owned PID 1. Preserve KWin and start only the missing shell inside
+# the already-running session bus, matching the recovery proven live on V56.2.
+plasmashell_seen=0
+for _ in $("$bb" seq 1 45); do
+	if /usr/bin/pgrep -x plasmashell >/dev/null 2>&1; then
+		plasmashell_seen=1
+		break
+	fi
+	sleep 1
+done
+fallback_shell_pid=
+if [ "$plasmashell_seen" != 1 ]; then
+	kwin_pid=$(/usr/bin/pgrep -o -x kwin_wayland 2>/dev/null || true)
+	dbus_address=
+	if [ -n "$kwin_pid" ] && [ -r "/proc/$kwin_pid/environ" ]; then
+		dbus_address=$(/usr/bin/tr '\0' '\n' <"/proc/$kwin_pid/environ" | \
+			/usr/bin/sed -n 's/^DBUS_SESSION_BUS_ADDRESS=//p' | \
+			/usr/bin/head -n 1)
+	fi
+	case "$dbus_address" in
+		unix:*) ;;
+		*) dbus_address= ;;
+	esac
+	if [ -n "$dbus_address" ]; then
+		screen_status "[TB371FC $build_label] Plasma shell fallback"
+		(
+			export HOME=/root USER=root LOGNAME=root
+			export DBUS_SESSION_BUS_ADDRESS="$dbus_address"
+			export XDG_RUNTIME_DIR=/run/user/0
+			export XDG_SESSION_TYPE=wayland
+			export XDG_CURRENT_DESKTOP=KDE
+			export WAYLAND_DISPLAY=wayland-0
+			export QT_QPA_PLATFORM=wayland
+			export QT_IM_MODULE=qtvirtualkeyboard
+			export QT_SCALE_FACTOR=1
+			kgsl_icd=/opt/tb371fc-mesa-kgsl-26.1.7/share/vulkan/icd.d/freedreno_icd.aarch64.json
+			if [ -e /etc/tb371fc/enable-v56-hardware-gl ] && [ -s "$kgsl_icd" ]; then
+				unset LIBGL_ALWAYS_SOFTWARE
+				unset QT_QUICK_BACKEND
+				export MESA_LOADER_DRIVER_OVERRIDE=zink
+				export GALLIUM_DRIVER=zink
+				export VK_ICD_FILENAMES="$kgsl_icd"
+				export QSG_RHI_BACKEND=opengl
+				export QSG_RENDER_LOOP=basic
+			else
+				export LIBGL_ALWAYS_SOFTWARE=1
+				export QT_QUICK_BACKEND=software
+				export QSG_RHI_BACKEND=software
+			fi
+			exec /usr/bin/plasmashell
+		) >>/var/log/tb371fc-plasmashell-fallback.log 2>&1 &
+		fallback_shell_pid=$!
+		echo "$fallback_shell_pid" >/run/tb371fc-plasmashell-fallback.pid
+		for _ in $("$bb" seq 1 30); do
+			if /usr/bin/pgrep -x plasmashell >/dev/null 2>&1; then
+				plasmashell_seen=1
+				break
+			fi
+			sleep 1
+		done
+	fi
+fi
+if [ "$plasmashell_seen" != 1 ]; then
+	echo 'Plasma shell did not appear; KWin and remote access remain alive.'
+	retry_with_software_renderer plasmashell-start-timeout || true
+	echo shell-missing >/run/tb371fc-v56-kde-status
+else
+	echo ready >/run/tb371fc-v56-kde-status
+	echo 'KDE Plasma Wayland owns the enabled internal DSI connector.'
+fi
+
+while kill -0 "$plasma_pid" 2>/dev/null || \
+	/usr/bin/pgrep -x plasmashell >/dev/null 2>&1; do
+	sleep 10
+	if [ ! -r "$connector_enabled" ] || [ "$(cat "$connector_enabled")" != enabled ]; then
+		echo 'Internal DSI connector was disabled; terminating Plasma.'
+		retry_with_software_renderer dsi-disabled-after-startup || true
+		stop_plasma_session
+		break
+	fi
+done
+
+echo failed >/run/tb371fc-v56-kde-status
+restore_console
+exit 9

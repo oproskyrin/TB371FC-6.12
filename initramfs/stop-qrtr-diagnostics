@@ -1,0 +1,10 @@
+#!/bin/sh
+
+for name in qrtr-lookup qrtr-ns; do
+	pid=$(busybox pidof "$name" 2>/dev/null || true)
+	[ -n "$pid" ] || continue
+	for one_pid in $pid; do
+		busybox kill "$one_pid" 2>/dev/null || true
+	done
+done
+echo "QRTR diagnostic processes stopped. Existing logs were preserved in /run."

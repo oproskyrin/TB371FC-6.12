@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/leds/backlight/lenovo,tb371fc-ktz8866.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Lenovo TB371FC synchronized dual KTZ8866 backlight
+
+maintainers:
+  - TB371FC Linux port maintainers <tb371fc-desktop@users.noreply.github.com>
+
+description: |
+  The Lenovo TB371FC uses two Kinetic Technologies KTZ8866 devices at the
+  same I2C address on separate buses.  Each device drives one half of the LCD
+  backlight, so both must receive identical brightness and enable writes.
+
+  The panel pinctrl state owns the shared board-level hardware-enable and LCD
+  bias GPIOs.  One controller is marked primary and exposes the single Linux
+  backlight device; the board-specific driver mirrors all writes to both I2C
+  clients.
+
+allOf:
+  - $ref: common.yaml#
+
+properties:
+  compatible:
+    const: lenovo,tb371fc-ktz8866
+
+  reg:
+    maxItems: 1
+
+  lenovo,primary-backlight:
+    type: boolean
+    description:
+      Marks the controller which registers the shared Linux backlight device.
+
+required:
+  - compatible
+  - reg
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    i2c {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        backlight@11 {
+            compatible = "lenovo,tb371fc-ktz8866";
+            reg = <0x11>;
+            lenovo,primary-backlight;
+        };
+    };

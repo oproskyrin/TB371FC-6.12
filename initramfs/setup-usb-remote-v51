@@ -1,0 +1,41 @@
+#!/bin/sh
+
+# V51 deliberately exposes only ACM.  This is the exact function used by the
+# tb371fc-desktop community serial-getty recipe, and V50 already proved that it
+# enumerates on this tablet and Windows host as PID 0104 / ttyGS0 / COM4.  Keep
+# network gadget experiments out of this recovery image until a working ash
+# can always return the tablet to bootloader without another physical cycle.
+
+modprobe libcomposite 2>/dev/null || true
+mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
+
+[ -d /sys/kernel/config/usb_gadget ] || exit 1
+
+gadget=/sys/kernel/config/usb_gadget/tb371fc_remote
+mkdir -p "$gadget"
+echo 0x1d6b >"$gadget/idVendor"
+
+mkdir -p "$gadget/strings/0x409"
+echo TB371FC-V51-REMOTE >"$gadget/strings/0x409/serialnumber"
+echo TB371FC-Linux >"$gadget/strings/0x409/manufacturer"
+echo "TB371FC V51 remote development" >"$gadget/strings/0x409/product"
+
+mkdir -p "$gadget/configs/c.1/strings/0x409"
+
+mkdir "$gadget/functions/acm.GS0" 2>/dev/null || exit 1
+ln -s "$gadget/functions/acm.GS0" "$gadget/configs/c.1/acm.GS0" || exit 1
+echo 0x0104 >"$gadget/idProduct"
+echo "CDC ACM BusyBox ash" >"$gadget/configs/c.1/strings/0x409/configuration"
+echo acm >/run/tb371fc-usb-mode
+
+for udc_path in /sys/class/udc/*; do
+	[ -e "$udc_path" ] || continue
+	udc=${udc_path##*/}
+	if echo "$udc" >"$gadget/UDC"; then
+		echo "USB ACM ash bound to $udc"
+		exit 0
+	fi
+done
+
+echo "No USB device controller is available" >&2
+exit 1

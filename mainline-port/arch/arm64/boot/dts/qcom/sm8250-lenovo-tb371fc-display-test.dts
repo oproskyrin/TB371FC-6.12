@@ -1,0 +1,104 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Lenovo TB371FC native-display test variant.
+ *
+ * The conservative base DTS intentionally leaves the internal DSI panel off.
+ * This variant enables the fitted Tianma NT36532 panel and both synchronized
+ * KTZ8866 backlight halves without changing the normal bring-up DTB.
+ */
+
+#include "sm8250-lenovo-tb371fc.dts"
+
+/ {
+	model = "Lenovo TB371FC (Tianma native display test)";
+
+	chosen {
+		stdout-path = "framebuffer0";
+
+		/* Preserve ABL's initialized splash until native DRM takes over. */
+		framebuffer0 {
+			status = "okay";
+			clocks = <&dispcc DISP_CC_MDSS_AHB_CLK>,
+				 <&gcc GCC_DISP_HF_AXI_CLK>,
+				 <&gcc GCC_DISP_SF_AXI_CLK>,
+				 <&dispcc DISP_CC_MDSS_VSYNC_CLK>,
+				 <&dispcc DISP_CC_MDSS_MDP_CLK>,
+				 <&dispcc DISP_CC_MDSS_BYTE0_CLK>,
+				 <&dispcc DISP_CC_MDSS_BYTE0_INTF_CLK>,
+				 <&dispcc DISP_CC_MDSS_BYTE1_CLK>,
+				 <&dispcc DISP_CC_MDSS_BYTE1_INTF_CLK>,
+				 <&dispcc DISP_CC_MDSS_PCLK0_CLK>,
+				 <&dispcc DISP_CC_MDSS_PCLK1_CLK>,
+				 <&dispcc DISP_CC_MDSS_ESC0_CLK>,
+				 <&dispcc DISP_CC_MDSS_ESC1_CLK>;
+			power-domains = <&dispcc MDSS_GDSC>;
+		};
+	};
+};
+
+&tlmm {
+	/* Exact stock sde_bl_active state, owned by the panel consumer. */
+	display_active: display-active-state {
+		pins = "gpio33", "gpio54", "gpio77", "gpio78";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+		output-high;
+	};
+};
+
+&i2c5 {
+	status = "okay";
+	clock-frequency = <400000>;
+
+	backlight_a: backlight@11 {
+		compatible = "lenovo,tb371fc-ktz8866";
+		reg = <0x11>;
+		lenovo,primary-backlight;
+	};
+};
+
+&i2c11 {
+	status = "okay";
+	clock-frequency = <400000>;
+
+	backlight_b: backlight@11 {
+		compatible = "lenovo,tb371fc-ktz8866";
+		reg = <0x11>;
+	};
+};
+
+/*
+ * The stock/community display path limits one SSPP to 0x758 pixels.  The
+ * board-specific catalog makes Linux 7.1 split the 2944-wide primary plane
+ * across two SSPPs using the upstream dpu_plane_split() implementation.
+ */
+&mdss_mdp {
+	compatible = "lenovo,tb371fc-dpu";
+};
+
+&mdss_dsi0 {
+	status = "okay";
+};
+
+&display_panel {
+	compatible = "lenovo,tb371fc-tianma-nt36532", "novatek,nt36523";
+	backlight = <&backlight_a>;
+	pinctrl-0 = <&display_active>;
+	pinctrl-names = "default";
+	status = "okay";
+};
+
+&mdss_dsi0_phy {
+	compatible = "lenovo,tb371fc-dsi-phy-7nm";
+	status = "okay";
+};
+
+&mdss_dsi1 {
+	status = "okay";
+};
+
+&mdss_dsi1_phy {
+	compatible = "lenovo,tb371fc-dsi-phy-7nm";
+	status = "okay";
+};

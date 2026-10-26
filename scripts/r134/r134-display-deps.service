@@ -1,0 +1,12 @@
+[Unit]
+Description=TB371FC display dependency control after USB SSH
+Requires=r130-sshd.service
+After=r130-sshd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/run/r130/busybox sh /run/r134/config/late-display-deps.sh
+TimeoutStartSec=150s
+StandardOutput=journal+console
+StandardError=journal+console

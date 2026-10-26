@@ -1,0 +1,11 @@
+--- a/simplefb.c
++++ b/simplefb.c
+@@ -682,7 +682,7 @@
+ 
+ static struct platform_driver simplefb_driver = {
+ 	.driver = {
+-		.name = "simple-framebuffer",
++		.name = "tb371fc-simplefb-control",
+ 		.of_match_table = simplefb_of_match,
+ 	},
+ 	.probe = simplefb_probe,

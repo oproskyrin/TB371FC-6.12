@@ -1,0 +1,2 @@
+# Optional second session; not installed in the default image
+plasma-mobile

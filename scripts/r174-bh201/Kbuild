@@ -1,0 +1,2 @@
+obj-m := tb371fc-bh201.o
+ccflags-y := -I$(srctree)/drivers/mmc/host

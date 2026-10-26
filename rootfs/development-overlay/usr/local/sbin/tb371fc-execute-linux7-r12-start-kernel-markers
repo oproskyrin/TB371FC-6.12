@@ -1,0 +1,70 @@
+#!/bin/sh
+set -eu
+
+approval=${1:-}
+[ "$approval" = 'EXECUTE_TB371FC_LINUX7_R12_START_KERNEL_MARKERS' ] || {
+	echo 'Exact execution token is required.' >&2
+	exit 2
+}
+[ "$(uname -r)" = '4.19.157-perf-v56.5+' ] || {
+	echo "unexpected source kernel: $(uname -r)" >&2
+	exit 1
+}
+
+loader=/usr/local/sbin/tb371fc-load-linux7-r12-start-kernel-markers
+module=/usr/local/lib/tb371fc/kexec-failsafe-bootloader-watchdog-v56.5.ko
+expected_module_hash=00d587499331fd05eb15bea0799cbd288bab25f168492dfcd43a0b809e557bd7
+state=/run/tb371fc-linux7-r12.state
+kexec=/bin/kexec
+[ -x "$kexec" ] || kexec=/run/tb371fc-rescue/kexec
+
+[ -x "$loader" ] && [ -x "$kexec" ] && [ -s "$module" ] || {
+	echo 'r12 loader, kexec or failsafe module is missing' >&2
+	exit 1
+}
+actual_module_hash=$(sha256sum "$module" | awk '{print $1}')
+[ "$actual_module_hash" = "$expected_module_hash" ] || {
+	echo 'failsafe module hash mismatch' >&2
+	exit 1
+}
+if grep -q '^kexec_failsafe_bootloader_watchdog ' /proc/modules; then
+	echo 'a kexec failsafe is already armed' >&2
+	exit 1
+fi
+
+"$loader"
+[ "$(cat /sys/kernel/kexec_loaded 2>/dev/null || true)" = 1 ] || {
+	echo 'kernel did not report a loaded kexec image' >&2
+	exit 1
+}
+[ "$(cat "$state")" = 'loaded-linux-7.1.8-r12-start-kernel-markers-via-v56.5' ] || {
+	echo 'verified r12 state is missing' >&2
+	exit 1
+}
+
+stamp=$(date +%Y%m%d-%H%M%S 2>/dev/null || echo unknown-time)
+log=/var/log/tb371fc-linux7-r12-shutdown-$stamp.log
+{
+	echo "source_kernel=$(uname -r)"
+	echo "image_sha256=4eb092e024d679fbbf1cb1ef04666bb5de2236ad26cbe8ee955af8f9090d2948"
+	echo 'failsafe_timeout_seconds=45'
+} >"$log.meta"
+dmesg -w >"$log" 2>&1 &
+dmesg_pid=$!
+
+insmod "$module" \
+	authorization=ARM_VERIFIED_R7_KEXEC_FAILSAFE_TO_BOOTLOADER \
+	timeout_sec=45
+sync
+echo 'Executing Linux 7.1.8 r12 early start_kernel markers.' >/dev/console
+
+set +e
+"$kexec" -e
+status=$?
+set -e
+
+rmmod kexec_failsafe_bootloader_watchdog 2>/dev/null || true
+kill "$dmesg_pid" 2>/dev/null || true
+sync
+echo "kexec returned with status $status; failsafe disarmed" >&2
+exit "$status"

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=TB371FC KWin diagnostic capture
+Comment=Authorized internal KWin screenshot capture for graphics diagnostics
+Exec=/usr/local/bin/tb371fc-kwin-capture
+NoDisplay=true
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2

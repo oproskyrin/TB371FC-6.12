@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Plasma Keyboard (TB371FC Turnip diagnostic)
+Exec=/usr/local/bin/tb371fc-plasma-keyboard-turnip
+Type=Application
+X-KDE-Wayland-VirtualKeyboard=true
+Icon=input-keyboard-virtual
+NoDisplay=true

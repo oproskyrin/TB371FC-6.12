@@ -1,0 +1,10 @@
+#!/bin/sh
+# Restore the proven V56 software-rendered Plasma session.
+set -eu
+
+pgrep -x kwin_wayland >/dev/null 2>&1 && {
+	echo 'KWin is already running; stop it before requesting the fallback.' >&2
+	exit 2
+}
+rm -f /etc/tb371fc/enable-v56-hardware-gl
+exec /run/tb371fc-rescue/start-v56-services

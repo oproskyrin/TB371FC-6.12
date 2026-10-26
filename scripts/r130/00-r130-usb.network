@@ -1,0 +1,11 @@
+[Match]
+Name=r130usb0
+
+[Link]
+RequiredForOnline=no
+
+[Network]
+Address=172.31.77.2/30
+DHCP=no
+LinkLocalAddressing=no
+IPv6AcceptRA=no

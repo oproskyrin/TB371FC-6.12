@@ -1,0 +1,287 @@
+#!/bin/sh
+set -u
+
+export PATH=/run/tb371fc-rescue:/usr/local/sbin:/usr/local/bin:/usr/bin
+export HOME=/root
+
+kernel_release=$(uname -r)
+v56_runtime=0
+case "$kernel_release" in
+	4.19.157-perf-v56*) v56_runtime=1 ;;
+esac
+
+bb=/run/tb371fc-rescue/busybox
+"$bb" hostname tb371fc-arch-dev
+mkdir -p /dev/pts /dev/shm /run/sshd /run/tb371fc /run/tb371fc-debug \
+	/tmp /var/log /mnt/tb371fc-sd
+if [ -e /sys/class/graphics/fb0/dev ] && \
+	[ "$(cat /sys/class/graphics/fb0/dev 2>/dev/null)" = 29:0 ] && \
+	[ ! -c /dev/fb0 ]; then
+	"$bb" mknod -m 600 /dev/fb0 c 29 0
+fi
+echo 'TB371FC Arch Linux development laboratory' \
+	>>/var/log/tb371fc-development-init.log
+
+# Keep an initramfs-independent recovery shell alive after switch_root.  It is
+# intentionally unauthenticated and reachable only over the point-to-point USB
+# gadget used during an attended development boot.
+transition_pid=$(cat /run/tb371fc-transition-shell.pid 2>/dev/null || true)
+[ -z "$transition_pid" ] || kill "$transition_pid" 2>/dev/null || true
+( exec "$bb" nc -lk -p 2323 -e /run/tb371fc-rescue/sh ) &
+rescue_pid=$!
+echo "$rescue_pid" >/run/tb371fc-rescue-shell.pid
+
+mountpoint -q /dev/pts || mount -t devpts devpts /dev/pts
+mountpoint -q /dev/shm || \
+	mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /dev/shm
+chmod 1777 /dev/shm
+mountpoint -q /run/tb371fc-debug || \
+	mount -t debugfs debugfs /run/tb371fc-debug 2>/dev/null || true
+mountpoint -q /tmp || mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /tmp
+
+"$bb" ip link set lo up
+netdev=$(cat /run/tb371fc-usb-netdev 2>/dev/null || true)
+network_watchdog_pid=
+
+start_network_watchdog() {
+	(
+		while sleep 2; do
+			"$bb" ip addr add 169.254.77.2/16 dev "$netdev" 2>/dev/null || true
+			"$bb" ip link set "$netdev" up 2>/dev/null || true
+		done
+	) &
+	network_watchdog_pid=$!
+}
+if [ -n "$netdev" ] && [ -e "/sys/class/net/$netdev" ]; then
+	"$bb" ip link set "$netdev" up
+	"$bb" ip addr add 169.254.77.2/16 dev "$netdev" 2>/dev/null || \
+		"$bb" ifconfig "$netdev" 169.254.77.2 netmask 255.255.0.0 up
+	start_network_watchdog
+fi
+
+if mountpoint -q /run/initramfs/mnt/sd; then
+	mount --bind /run/initramfs/mnt/sd /mnt/tb371fc-sd
+fi
+
+touch /var/log/tb371fc-sshd.log
+# The community 4.19 kernel exposes CDC ACM reliably but not CDC NCM. V55 keeps
+# OpenSSH on loopback. V56 keeps the same authenticated serial path and also
+# listens on the WLAN interfaces so development can continue without the USB
+# cable after NetworkManager associates.
+sshd_dropin=/etc/ssh/sshd_config.d/10-tb371fc-development.conf
+if [ -f "$sshd_dropin" ]; then
+	sshd_listen=127.0.0.1
+	[ "$v56_runtime" = 0 ] || sshd_listen=0.0.0.0
+	"$bb" sed -i \
+		"s/^ListenAddress[[:space:]].*/ListenAddress $sshd_listen/" \
+		"$sshd_dropin"
+fi
+# Keep one bounded boot snapshot. The downstream battery driver can emit
+# hundreds of lines per second; an unbounded dmesg -w grew this file to 2.4 GiB
+# during display development. The live ring buffer remains available over the
+# USB rescue shell for targeted captures.
+dmesg >/var/log/tb371fc-kernel.log
+
+if [ -x /usr/local/sbin/start-qrtr-diagnostics ]; then
+	/usr/local/sbin/start-qrtr-diagnostics >/var/log/tb371fc-qrtr-start.log 2>&1 || true
+fi
+
+sshd_config_ok=0
+if {
+	echo "=== $(date -Iseconds 2>/dev/null || date) development init ==="
+	/usr/bin/ssh-keygen -A
+	/usr/bin/sshd -t
+} >>/var/log/tb371fc-sshd.log 2>&1; then
+	sshd_config_ok=1
+fi
+
+sshd_pid=
+start_sshd() {
+	/usr/bin/sshd -D -e >>/var/log/tb371fc-sshd.log 2>&1 &
+	sshd_pid=$!
+}
+
+sshd_is_listening() {
+	"$bb" grep -Eq ':08AE[[:space:]].*[[:space:]]0A[[:space:]]' \
+		/proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+
+screen_status() {
+	[ -c /dev/tty0 ] || return 0
+	"$bb" printf '%s\n' "$1" >/dev/tty0
+}
+
+shutdown_lab() {
+	sync
+	if [ -x /run/initramfs/bin/return-to-bootloader ]; then
+		exec /run/initramfs/bin/return-to-bootloader LOGS_COPIED_REBOOT_TO_BOOTLOADER
+	fi
+	if [ -x /run/tb371fc-rescue/return-to-bootloader ]; then
+		exec /run/tb371fc-rescue/return-to-bootloader LOGS_COPIED_REBOOT_TO_BOOTLOADER
+	fi
+	reboot -f
+}
+trap shutdown_lab INT TERM
+
+if [ "$sshd_config_ok" = 1 ]; then
+	start_sshd
+fi
+sshd_ready=0
+for _ in $("$bb" seq 1 20); do
+	if sshd_is_listening; then
+		sshd_ready=1
+		break
+	fi
+	[ -z "$sshd_pid" ] || kill -0 "$sshd_pid" 2>/dev/null || break
+	sleep 1
+done
+if [ "$sshd_ready" = 1 ]; then
+	screen_status '[TB371FC Linux] OpenSSH LISTEN 127.0.0.1:2222'
+else
+	screen_status '[TB371FC Linux] OpenSSH FAILED; see log below'
+	[ ! -c /dev/tty0 ] || "$bb" tail -n 12 /var/log/tb371fc-sshd.log >/dev/tty0
+fi
+
+if [ -x /run/tb371fc-rescue/collect-hardware-snapshot ]; then
+	/run/tb371fc-rescue/collect-hardware-snapshot \
+		/var/log/tb371fc-hardware-snapshot.txt \
+		>/var/log/tb371fc-hardware-snapshot-launch.log 2>&1 &
+fi
+
+serial_gate_pid=
+serial_ssh_session_timeout=${TB371FC_SERIAL_SSH_SESSION_TIMEOUT:-300}
+start_serial_ssh_gate() {
+	(
+		while :; do
+			if [ ! -c /dev/ttyGS0 ]; then
+				sleep 1
+				continue
+			fi
+			"$bb" stty -F /dev/ttyGS0 sane -echo 115200 \
+				2>>/var/log/tb371fc-serial-ssh.log || true
+			"$bb" printf '__TB371FC_SSH_GATE_READY__\r\n' >/dev/ttyGS0
+			serial_command=
+			IFS= read -r serial_command </dev/ttyGS0 || true
+			case "$serial_command" in
+			SSH)
+				if sshd_is_listening; then
+					"$bb" printf '__TB371FC_SSH_STREAM__\r\n' >/dev/ttyGS0
+					"$bb" stty -F /dev/ttyGS0 raw -echo 115200 \
+						2>>/var/log/tb371fc-serial-ssh.log || true
+					"$bb" timeout "$serial_ssh_session_timeout" \
+						"$bb" nc 127.0.0.1 2222 \
+						</dev/ttyGS0 >/dev/ttyGS0 \
+						2>>/var/log/tb371fc-serial-ssh.log || true
+					"$bb" printf '__TB371FC_SSH_STREAM_CLOSED__\r\n' >/dev/ttyGS0 2>/dev/null || true
+				else
+					"$bb" printf '__TB371FC_SSHD_NOT_LISTENING__\r\n' >/dev/ttyGS0
+				fi
+				;;
+			DIAG)
+				{
+					echo '=== sshd log ==='
+					"$bb" tail -n 30 /var/log/tb371fc-sshd.log
+					echo '=== serial log ==='
+					"$bb" tail -n 30 /var/log/tb371fc-serial-ssh.log
+					echo '__TB371FC_DIAG_DONE__'
+				} >/dev/ttyGS0 2>&1
+				;;
+			exit)
+				break
+				;;
+			esac
+			sleep 1
+		done
+	) &
+	serial_gate_pid=$!
+	echo "$serial_gate_pid" >/run/tb371fc-serial-ssh-gate.pid
+}
+[ ! -c /dev/ttyGS0 ] || start_serial_ssh_gate
+
+v56_services_pid=
+# A persistent rootfs override lets us iterate on the userspace session while
+# keeping the known-good recovery image untouched.  The initramfs copy remains
+# the fallback whenever the override is absent or invalid.
+v56_services_override=/etc/tb371fc/start-v56-services.override
+if [ "$v56_runtime" = 1 ] && [ -x "$v56_services_override" ] && \
+	grep -Fqx 'TB371FC_V56_SERVICE_OVERRIDE_API=3' \
+		"$v56_services_override" && /bin/sh -n "$v56_services_override"; then
+	cp "$v56_services_override" /run/tb371fc-rescue/start-v56-services
+	chmod 0755 /run/tb371fc-rescue/start-v56-services
+	echo 'Using persistent V56 service override.' \
+		>>/var/log/tb371fc-development-init.log
+elif [ "$v56_runtime" = 1 ] && [ -e "$v56_services_override" ]; then
+	# An obsolete override may be paired with a hardware marker from an older
+	# failed experiment. Ignore both so the bundled recovery service gets a
+	# deterministic software-rendered first boot.
+	rm -f /etc/tb371fc/enable-v56-hardware-gl
+	echo 'Ignored obsolete V56 service override; hardware marker cleared.' \
+		>>/var/log/tb371fc-development-init.log
+fi
+if [ "$v56_runtime" = 1 ] && \
+	[ -x /run/tb371fc-rescue/start-v56-services ]; then
+	/run/tb371fc-rescue/start-v56-services &
+	v56_services_pid=$!
+	echo "$v56_services_pid" >/run/tb371fc-v56-services.pid
+fi
+if [ "$v56_runtime" = 1 ] && \
+	[ -x /usr/local/sbin/tb371fc-kde-runtime-fix ]; then
+	/usr/local/sbin/tb371fc-kde-runtime-fix &
+	echo $! >/run/tb371fc-kde-runtime-fix.pid
+fi
+(
+	while sleep 60; do
+		sync
+	done
+) &
+
+echo 'TB371FC Arch development laboratory is ready.' \
+	>>/var/log/tb371fc-development-init.log
+if [ -c /dev/ttyGS0 ]; then
+	echo 'SSH: public-key OpenSSH over USB ACM serial tunnel' \
+		>>/var/log/tb371fc-development-init.log
+elif [ -n "$netdev" ]; then
+	echo 'SSH: root@169.254.77.2 port 2222 (public key only)' \
+		>>/var/log/tb371fc-development-init.log
+fi
+
+# Qualcomm's downstream DRM driver can deadlock fbcon writes while a KMS
+# client owns DRM master. Never take DRM master automatically: the inherited
+# simplefb console and remote access are more valuable than an unattended
+# modeset. A developer must create this volatile opt-in marker explicitly.
+if [ -e /run/tb371fc-enable-legacy-kms-smoke ] && \
+	[ -x /run/tb371fc-rescue/drm-kms-smoketest ] && \
+	[ "$(cat /sys/class/drm/card0/dev 2>/dev/null)" = 226:0 ]; then
+	mkdir -p /dev/dri
+	[ -c /dev/dri/card0 ] || "$bb" mknod -m 660 /dev/dri/card0 c 226 0
+	# Keep one framebuffer alive for the whole diagnostic session.  A short
+	# holder previously exited and left an active CRTC with plane_mask=0;
+	# the subsequent automatic cold cycle also mixed panel diagnosis with a
+	# second, unrelated modeset.  Cold cycles are now explicit live tests.
+	/run/tb371fc-rescue/drm-kms-smoketest 120 red 86400 \
+		>/var/log/tb371fc-kms-smoketest.log 2>&1 &
+	echo $! >/run/tb371fc-kms-smoketest.pid
+else
+	echo 'Legacy KMS smoke test: skipped (explicit opt-in required).' \
+		>>/var/log/tb371fc-development-init.log
+fi
+
+while :; do
+	sleep 5
+	if [ "$sshd_config_ok" = 1 ] && { [ -z "$sshd_pid" ] || \
+		! kill -0 "$sshd_pid" 2>/dev/null; }; then
+		start_sshd
+	fi
+	if ! kill -0 "$rescue_pid" 2>/dev/null; then
+		"$bb" nc -lk -p 2323 -e /run/tb371fc-rescue/sh &
+		rescue_pid=$!
+	fi
+	if [ -n "$network_watchdog_pid" ] && \
+		! kill -0 "$network_watchdog_pid" 2>/dev/null; then
+		start_network_watchdog
+	fi
+	if [ -c /dev/ttyGS0 ] && { [ -z "$serial_gate_pid" ] || \
+		! kill -0 "$serial_gate_pid" 2>/dev/null; }; then
+		start_serial_ssh_gate
+	fi
+done

@@ -1,0 +1,18 @@
+#!/bin/sh
+# Run one Wayland application on Adreno 650 without changing KWin.
+set -eu
+
+icd=/opt/tb371fc-mesa-kgsl-26.1.7/share/vulkan/icd.d/freedreno_icd.aarch64.json
+[ "$#" -gt 0 ] || { echo "Usage: $0 command [args...]" >&2; exit 2; }
+[ -s "$icd" ] || { echo "Missing Turnip ICD: $icd" >&2; exit 3; }
+[ -c /dev/kgsl-3d0 ] || { echo 'Missing /dev/kgsl-3d0.' >&2; exit 4; }
+
+unset LIBGL_ALWAYS_SOFTWARE QT_QUICK_BACKEND
+export VK_ICD_FILENAMES="$icd"
+export VK_DRIVER_FILES="$icd"
+export MESA_LOADER_DRIVER_OVERRIDE=zink
+export GALLIUM_DRIVER=zink
+export TU_DEBUG=noconform
+export MESA_VK_WSI_DEBUG=sw
+
+exec "$@"

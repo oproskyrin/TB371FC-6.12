@@ -1,0 +1,11 @@
+[Unit]
+Description=TB371FC NT36532 SPI touchscreen (nt36523_ts)
+After=multi-user.target systemd-udevd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/run/r130/busybox timeout 60 /run/r130/busybox insmod /run/r130/modules/nt36523_ts.ko
+TimeoutStartSec=70s
+StandardOutput=journal+console
+StandardError=journal+console

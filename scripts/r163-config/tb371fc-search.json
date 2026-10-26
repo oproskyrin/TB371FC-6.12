@@ -1,0 +1,9 @@
+{
+  "DefaultSearchProviderEnabled": true,
+  "DefaultSearchProviderName": "Яндекс",
+  "DefaultSearchProviderKeyword": "ya.ru",
+  "DefaultSearchProviderSearchURL": "https://ya.ru/search/?text={searchTerms}",
+  "DefaultSearchProviderSuggestURL": "https://suggest.yandex.ru/suggest-ff.cgi?part={searchTerms}",
+  "DefaultSearchProviderIconURL": "https://ya.ru/favicon.ico",
+  "DefaultSearchProviderEncodings": ["UTF-8"]
+}

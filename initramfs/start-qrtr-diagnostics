@@ -1,0 +1,21 @@
+#!/bin/sh
+
+# Start observability only. Deliberately does not touch /dev/wlan.
+if busybox pidof qrtr-ns >/dev/null 2>&1; then
+	echo "qrtr-ns is already running"
+else
+	qrtr-ns -f -v >/run/qrtr-ns.log 2>&1 &
+	echo $! >/run/qrtr-ns.pid
+fi
+
+if busybox pidof qrtr-lookup >/dev/null 2>&1; then
+	echo "qrtr-lookup is already running"
+else
+	qrtr-lookup >/run/qrtr-lookup.log 2>&1 &
+	echo $! >/run/qrtr-lookup.pid
+fi
+
+sleep 1
+echo "QRTR diagnostics started. Logs: /run/qrtr-ns.log and /run/qrtr-lookup.log"
+echo "This command did not activate WLAN."
+busybox pidof qrtr-ns qrtr-lookup 2>/dev/null || true

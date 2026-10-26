@@ -1,0 +1,9 @@
+[Unit]
+Description=TB371FC Linux 6.12 Arch boot evidence
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/tb371fc-r129-evidence
+StandardOutput=journal+console
+StandardError=journal+console

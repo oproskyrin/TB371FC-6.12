@@ -1,0 +1,28 @@
+#!/bin/sh
+
+set -eu
+
+payload_dir=/run/tb371fc-kexec-r7
+state=$payload_dir/state
+kexec=/bin/kexec
+[ -x "$kexec" ] || kexec=/run/tb371fc-rescue/kexec
+[ -x "$kexec" ] || {
+	echo 'kexec binary is unavailable' >&2
+	exit 1
+}
+
+[ "$(uname -r)" = '4.19.157-perf-v56.3+' ] || {
+	echo "refusing r7 execution from unexpected kernel: $(uname -r)" >&2
+	exit 1
+}
+[ "$(cat "$state" 2>/dev/null || true)" = \
+	'loaded-linux-7.1.8-r7-arch-test' ] || {
+	echo 'No verified Linux 7.1.8 r7 payload is loaded.' >&2
+	exit 1
+}
+
+echo 'Executing verified Linux 7.1.8 r7 RAM payload now.' >/dev/console
+sync
+"$kexec" -e
+echo 'kexec returned unexpectedly.' >&2
+exit 1

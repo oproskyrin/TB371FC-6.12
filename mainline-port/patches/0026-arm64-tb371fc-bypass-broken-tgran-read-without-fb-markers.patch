@@ -1,0 +1,26 @@
+diff --git a/arch/arm64/kernel/head.S b/arch/arm64/kernel/head.S
+index 27591adf87cc..abf00612ec75 100644
+--- a/arch/arm64/kernel/head.S
++++ b/arch/arm64/kernel/head.S
+@@ -571,15 +571,12 @@ SYM_FUNC_START(__enable_mmu)
+ #ifdef CONFIG_TB371FC_EARLY_FB_MARKER
+ 	tb371fc_mmu_stage 0xff40, 0x0000, 71
+-	/* Diagnostic-only: SM8250 is already known to support 4 KiB pages. */
+-	mov	x3, xzr
+-#else
+-	mrs	x3, ID_AA64MMFR0_EL1
+-	ubfx	x3, x3, #ID_AA64MMFR0_EL1_TGRAN_SHIFT, 4
+-	cmp     x3, #ID_AA64MMFR0_EL1_TGRAN_SUPPORTED_MIN
+-	b.lt    __no_granule_support
+-	cmp     x3, #ID_AA64MMFR0_EL1_TGRAN_SUPPORTED_MAX
+-	b.gt    __no_granule_support
+ #endif
++	/*
++	 * TB371FC/SM8250 has 4 KiB granules.  The Lenovo ABL handoff exposes an
++	 * unreliable ID_AA64MMFR0_EL1 read here, observed to park the boot CPU.
++	 * Keep the proven bypass independent from unsafe framebuffer diagnostics.
++	 */
++	mov	x3, xzr
+ #ifdef CONFIG_TB371FC_EARLY_FB_MARKER
+ 	tb371fc_mmu_stage 0xff00, 0x4040, 72
+ #endif

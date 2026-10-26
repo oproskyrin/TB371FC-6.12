@@ -1,0 +1,80 @@
+#!/bin/sh
+
+set -eu
+
+approval=${1:-}
+[ "$approval" = 'EXECUTE_VERIFIED_R7_FROM_V56_4_WITH_FAILSAFE' ] || {
+	echo 'Exact execution token is required.' >&2
+	exit 2
+}
+[ "$(uname -r)" = '4.19.157-perf-v56.4+' ] || {
+	echo "Unexpected source kernel: $(uname -r)" >&2
+	exit 1
+}
+
+payload_dir=/run/tb371fc-kexec-r7
+loader=$payload_dir/load-mainline-kexec-r7-v56-4
+executor=$payload_dir/execute-mainline-kexec-r7-v56-4
+module=/usr/local/lib/tb371fc/kexec-failsafe-bootloader-watchdog-v56.4.ko
+expected_module_hash=86d58a90e10cb4f571f798008e7fa8dad8f29a0973cd94a52bcc65bfd112a8f9
+
+[ -x "$loader" ] && [ -x "$executor" ] || {
+	echo 'Verified V56.4 r7 loader/executor is missing from /run.' >&2
+	exit 1
+}
+[ -s "$module" ] || {
+	echo "Failsafe module is missing: $module" >&2
+	exit 1
+}
+actual_module_hash=$(sha256sum "$module" | awk '{print $1}')
+[ "$actual_module_hash" = "$expected_module_hash" ] || {
+	echo 'Failsafe module hash mismatch.' >&2
+	exit 1
+}
+if grep -q '^kexec_failsafe_bootloader_watchdog ' /proc/modules; then
+	echo 'A kexec failsafe is already armed; refusing to stack timers.' >&2
+	exit 1
+fi
+
+"$loader"
+[ "$(cat /sys/kernel/kexec_loaded 2>/dev/null || true)" = 1 ] || {
+	echo 'Kernel did not report a loaded kexec image.' >&2
+	exit 1
+}
+
+stamp=$(date +%Y%m%d-%H%M%S 2>/dev/null || echo unknown-time)
+log=/var/log/tb371fc-kexec-r7-v56.4-shutdown-$stamp.log
+meta=$log.meta
+{
+	echo "source_kernel=$(uname -r)"
+	echo "payload_state=$(cat "$payload_dir/state")"
+	echo "module_sha256=$actual_module_hash"
+	echo 'failsafe_timeout_seconds=45'
+} >"$meta"
+
+dmesg -w >"$log" 2>&1 &
+dmesg_pid=$!
+(
+	while kill -0 "$dmesg_pid" 2>/dev/null; do
+		sync
+		sleep 1
+	done
+) &
+sync_pid=$!
+
+insmod "$module" \
+	authorization=ARM_VERIFIED_R7_KEXEC_FAILSAFE_TO_BOOTLOADER \
+	timeout_sec=45
+sync
+
+set +e
+"$executor"
+status=$?
+set -e
+
+echo "kexec returned with status $status; failsafe remains armed." >&2
+echo 'Waiting for the bounded bootloader reset instead of resuming userspace.' >&2
+while :; do
+	sync
+	sleep 1
+done

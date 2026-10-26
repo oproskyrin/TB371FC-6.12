@@ -1,0 +1,121 @@
+From: TB371FC Linux bring-up <tb371fc@example.invalid>
+Subject: [PATCH] arm64: add staged TB371FC early framebuffer markers
+
+Provide diagnostic-only framebuffer bands at seven primary boot milestones.
+The markers localize a silent reset before serial, USB and initramfs are
+available. They assume the stock 2944x1840 a8r8g8b8 continuous-splash buffer
+at physical address 0x9c000000 and are unsuitable for production kernels.
+---
+ arch/arm64/Kconfig.debug | 10 ++++++
+ arch/arm64/kernel/head.S | 63 +++++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 72 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/Kconfig.debug b/arch/arm64/Kconfig.debug
+index b230d5c25d1b..0c65d5ad267b 100644
+--- a/arch/arm64/Kconfig.debug
++++ b/arch/arm64/Kconfig.debug
+@@ -24,4 +24,14 @@ config ARM64_RELOC_TEST
+ 	depends on m
+ 	tristate "Relocation testing module"
+ 
++config TB371FC_EARLY_FB_MARKER
++	bool "TB371FC staged pre-MMU framebuffer markers"
++	default n
++	help
++	  Paint seven non-overlapping diagnostic bands in the Lenovo TB371FC
++	  continuous-splash framebuffer while the primary arm64 boot path
++	  progresses. This is only an early handoff diagnostic and must not be
++	  enabled in a normal kernel.
++
+ source "drivers/hwtracing/coresight/Kconfig"
+diff --git a/arch/arm64/kernel/head.S b/arch/arm64/kernel/head.S
+index b2a86da76e3f..a7c78054c9cc 100644
+--- a/arch/arm64/kernel/head.S
++++ b/arch/arm64/kernel/head.S
+@@ -82,9 +82,41 @@
+ 	 *  x20        primary_entry() .. __primary_switch()    CPU boot mode
+ 	 *  x21        primary_entry() .. start_kernel()        FDT pointer passed at boot in x0
+ 	 */
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/*
++	 * Paint one 2944x256 a8r8g8b8 band without touching x0, x19-x21 or
++	 * the link register. The loop count is 11776 * 256 / 8 = 0x5c000.
++	 */
++	.macro	tb371fc_early_fb_band addr_hi, addr_lo, color_hi, color_lo
++	movz	x1, #\addr_lo
++	movk	x1, #\addr_hi, lsl #16
++	movz	w2, #\color_lo
++	movk	w2, #\color_hi, lsl #16
++	movz	x3, #0xc000
++	movk	x3, #0x5, lsl #16
++.Ltb371fc_fill_splash\@:
++	stp	w2, w2, [x1], #8
++	subs	x3, x3, #1
++	b.ne	.Ltb371fc_fill_splash\@
++	dsb	sy
++	.endm
++#endif
++
+ SYM_CODE_START(primary_entry)
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 1: entered the Linux Image (red). */
++	tb371fc_early_fb_band 0x9c00, 0x0000, 0xffff, 0x0000
++#endif
+ 	bl	record_mmu_state
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 2: CurrentEL and incoming MMU state are readable (green). */
++	tb371fc_early_fb_band 0x9c2e, 0x0000, 0xff00, 0xff00
++#endif
+ 	bl	preserve_boot_args
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 3: DTB boot arguments were preserved (blue). */
++	tb371fc_early_fb_band 0x9c5c, 0x0000, 0xff00, 0x00ff
++#endif
+ 
+ 	adrp	x1, early_init_stack
+ 	mov	sp, x1
+@@ -93,6 +125,10 @@ SYM_CODE_START(primary_entry)
+ 	mov	x1, xzr
+ 	bl	__pi_create_init_idmap
+ 
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 4: initial identity page tables were constructed (yellow). */
++	tb371fc_early_fb_band 0x9c8a, 0x0000, 0xffff, 0xff00
++#endif
+ 	/*
+ 	 * If the page tables have been populated with non-cacheable
+ 	 * accesses (MMU disabled), invalidate those tables again to
+@@ -116,10 +152,19 @@ SYM_CODE_START(primary_entry)
+ 	adr_l	x2, dcache_clean_poc
+ 	blr	x2
+ 
+-1:	mov	x0, x19
++1:
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 5: pre-MMU cache maintenance completed (magenta). */
++	tb371fc_early_fb_band 0x9cb8, 0x0000, 0xffff, 0x00ff
++#endif
++	mov	x0, x19
+ 	bl	init_kernel_el			// w0=cpu_boot_mode
+ 	mov	x20, x0
+ 
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 6: EL1/EL2 transition completed (cyan). */
++	tb371fc_early_fb_band 0x9ce6, 0x0000, 0xff00, 0xffff
++#endif
+ 	/*
+ 	 * The following calls CPU setup code, see arch/arm64/mm/proc.S for
+ 	 * details.
+@@ -127,6 +172,10 @@ SYM_CODE_START(primary_entry)
+ 	 * the TCR will have been set.
+ 	 */
+ 	bl	__cpu_setup			// initialise processor
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 7: CPU control registers are ready for enabling the MMU (white). */
++	tb371fc_early_fb_band 0x9d14, 0x0000, 0xffff, 0xffff
++#endif
+ 	b	__primary_switch
+ SYM_CODE_END(primary_entry)
+ 
+-- 
+2.45.2

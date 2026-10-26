@@ -1,0 +1,11 @@
+[Unit]
+Description=TB371FC late USB2 ACM/NCM diagnostic activation
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/run/r130/busybox sh /run/r130/config/start-usb.sh
+TimeoutStartSec=70s
+StandardOutput=journal+console
+StandardError=journal+console

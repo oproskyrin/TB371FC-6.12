@@ -1,0 +1,23 @@
+#!/bin/sh
+# Persistent fixes that can evolve independently of the recovery image.
+set -u
+
+log=/var/log/tb371fc-kde-runtime-fix.log
+exec >>"$log" 2>&1
+
+echo "=== $(/usr/bin/date -Iseconds 2>/dev/null || true) runtime fix ==="
+if [ -x /usr/local/sbin/tb371fc-sync-http-time ]; then
+	for _ in $(/run/tb371fc-rescue/busybox seq 1 180); do
+		if /usr/bin/ip -4 -o address show wlan0 2>/dev/null | \
+			grep -q ' inet '; then
+			/usr/local/sbin/tb371fc-sync-http-time
+			exit $?
+		fi
+		sleep 1
+	done
+	echo 'Timed out waiting for WLAN before HTTP Date bootstrap.'
+	exit 1
+fi
+
+echo 'HTTP Date bootstrap helper is unavailable.'
+exit 1

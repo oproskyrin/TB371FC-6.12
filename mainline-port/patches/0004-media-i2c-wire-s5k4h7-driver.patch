@@ -1,0 +1,39 @@
+From: TB371FC Linux Port <tb371fc@example.invalid>
+Subject: [PATCH] media: i2c: wire Samsung S5K4H7 driver into Kconfig
+
+The device-specific source and binding are copied into the kernel tree by the
+build script. Keep the Kbuild integration as a normal, idempotent patch rather
+than rewriting Kconfig with sed on every build.
+---
+ drivers/media/i2c/Kconfig  | 6 ++++++
+ drivers/media/i2c/Makefile | 1 +
+ 2 files changed, 7 insertions(+)
+
+diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
+--- a/drivers/media/i2c/Kconfig
++++ b/drivers/media/i2c/Kconfig
+@@ -770,6 +770,12 @@ config VIDEO_S5C73M3
+ 	  This is a V4L2 sensor driver for Samsung S5C73M3
+ 	  8 Mpixel camera.
+ 
++config VIDEO_S5K4H7
++	tristate "Samsung S5K4H7 sensor support"
++	select V4L2_CCI_I2C
++	help
++	  This is a V4L2 sensor driver for the Samsung S5K4H7 camera.
++
+ config VIDEO_S5K3M5
+ 	tristate "Samsung S5K3M5 sensor support"
+ 	select V4L2_CCI_I2C
+diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
+--- a/drivers/media/i2c/Makefile
++++ b/drivers/media/i2c/Makefile
+@@ -128,5 +128,6 @@ obj-$(CONFIG_VIDEO_RDACM21) += rdacm21.o
+ obj-$(CONFIG_VIDEO_RJ54N1) += rj54n1cb0c.o
+ obj-$(CONFIG_VIDEO_S5C73M3) += s5c73m3/
++obj-$(CONFIG_VIDEO_S5K4H7) += s5k4h7.o
+ obj-$(CONFIG_VIDEO_S5K3M5) += s5k3m5.o
+ obj-$(CONFIG_VIDEO_S5K5BAF) += s5k5baf.o
+ obj-$(CONFIG_VIDEO_S5K6A3) += s5k6a3.o
+-- 
+2.50.0

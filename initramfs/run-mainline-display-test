@@ -1,0 +1,49 @@
+#!/bin/sh
+
+refresh=${1:-120}
+pattern=${2:-checker}
+hold_seconds=${3:-120}
+
+case "$refresh" in
+	30|60|120|144) ;;
+	*) echo "Refresh must be one of: 30, 60, 120, 144" >&2; exit 2 ;;
+esac
+case "$pattern" in
+	checker|red|green|blue|white|black|flash) ;;
+	*) echo "Pattern must be checker, red, green, blue, white, black or flash" >&2; exit 2 ;;
+esac
+case "$hold_seconds" in
+	*[!0-9]*|'') echo "Hold time must be an integer number of seconds" >&2; exit 2 ;;
+esac
+
+[ -c /dev/dri/card0 ] || {
+	echo "DRM card0 is not available; no modeset was attempted." >&2
+	exit 1
+}
+
+if [ -s /run/tb371fc-display-test.pid ]; then
+	old_pid=$(cat /run/tb371fc-display-test.pid)
+	if kill -0 "$old_pid" 2>/dev/null; then
+		echo "A display test is already running as PID $old_pid" >&2
+		exit 1
+	fi
+fi
+
+snapshot-mainline-display /run/tb371fc-display-before.txt >/dev/null 2>&1 || true
+rm -f /run/tb371fc-display-test.log /run/tb371fc-display-test.rc \
+	/run/tb371fc-display-after.txt
+
+echo "Starting attended RAM-only KMS test: ${refresh} Hz, ${pattern}, ${hold_seconds} s"
+echo "The shell remains available while the modeset process runs."
+(
+	drm-kms-smoketest "$refresh" "$pattern" "$hold_seconds" \
+		>/run/tb371fc-display-test.log 2>&1
+	rc=$?
+	echo "$rc" >/run/tb371fc-display-test.rc
+	snapshot-mainline-display /run/tb371fc-display-after.txt >/dev/null 2>&1 || true
+) &
+test_pid=$!
+echo "$test_pid" >/run/tb371fc-display-test.pid
+echo "KMS test PID: $test_pid"
+echo "Use 'status-mainline-display-test' from this or a second USB shell."
+

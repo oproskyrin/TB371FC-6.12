@@ -1,0 +1,40 @@
+From: TB371FC Linux port maintainers <tb371fc-desktop@users.noreply.github.com>
+Subject: [PATCH] dt-bindings: qcom: add TB371FC display compatibles
+
+The Lenovo TB371FC uses SM8250 with a board-specific DSI PHY lane
+configuration.  The PHY binding and driver already accept the dedicated
+compatible, but the SM8250 MDSS parent schema and the board compatible list
+must accept it as well.
+
+Signed-off-by: TB371FC Linux port maintainers <tb371fc-desktop@users.noreply.github.com>
+---
+ Documentation/devicetree/bindings/arm/qcom.yaml          | 1 +
+ .../devicetree/bindings/display/msm/qcom,sm8250-mdss.yaml | 3 ++-
+ 2 files changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/arm/qcom.yaml b/Documentation/devicetree/bindings/arm/qcom.yaml
+index e8d2a77a2a08..bf4e62e59e54 100644
+--- a/Documentation/devicetree/bindings/arm/qcom.yaml
++++ b/Documentation/devicetree/bindings/arm/qcom.yaml
+@@ -1055,5 +1055,6 @@ properties:
+       - items:
+           - enum:
++              - lenovo,tb371fc
+               - qcom,qrb5165-rb5
+               - qcom,sm8250-hdk
+               - qcom,sm8250-mtp
+diff --git a/Documentation/devicetree/bindings/display/msm/qcom,sm8250-mdss.yaml b/Documentation/devicetree/bindings/display/msm/qcom,sm8250-mdss.yaml
+index 3fb63d820a31..67f51b7f129f 100644
+--- a/Documentation/devicetree/bindings/display/msm/qcom,sm8250-mdss.yaml
++++ b/Documentation/devicetree/bindings/display/msm/qcom,sm8250-mdss.yaml
+@@ -78,7 +78,9 @@ patternProperties:
+ 
+     properties:
+       compatible:
+-        const: qcom,dsi-phy-7nm
++        enum:
++          - lenovo,tb371fc-dsi-phy-7nm
++          - qcom,dsi-phy-7nm
+ 
+ required:
+   - compatible

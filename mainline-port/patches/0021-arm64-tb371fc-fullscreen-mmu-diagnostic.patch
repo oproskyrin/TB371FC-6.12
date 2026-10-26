@@ -1,0 +1,56 @@
+From: TB371FC Linux bring-up <tb371fc@example.invalid>
+Subject: [PATCH] arm64: tb371fc: make MMU transition stages unambiguous
+
+Use the complete 2944x1840 firmware framebuffer for the five MMU transition
+markers.  The earlier narrow marker could be hidden by the retained firmware
+framebuffer, making several different failures look identical.  The marker
+uses only x6-x9 and therefore preserves the __enable_mmu arguments in x0-x3.
+
+For the TB371FC diagnostic build, bypass the architectural granule query.  The
+shipping SM8250 Android kernel proves 4 KiB granule support and earlier binary
+experiments could not establish that the patched instruction stream was the
+one actually executed.
+---
+ arch/arm64/kernel/head.S | 21 +++++++++++++--------
+ 1 file changed, 13 insertions(+), 8 deletions(-)
+
+diff --git a/arch/arm64/kernel/head.S b/arch/arm64/kernel/head.S
+--- a/arch/arm64/kernel/head.S
++++ b/arch/arm64/kernel/head.S
+@@ -124,12 +124,13 @@
+ 	.endm
+ 
+-	/* Small marker which preserves the __enable_mmu x0-x3 arguments. */
++	/* Full-screen marker which preserves the __enable_mmu x0-x3 arguments. */
+ 	.macro	tb371fc_mmu_stage color_hi, color_lo, stage
+ 	movz	x6, #0x0000
+-	movk	x6, #0x9d14, lsl #16
++	movk	x6, #0x9c00, lsl #16
+ 	movz	w7, #\color_lo
+ 	movk	w7, #\color_hi, lsl #16
+-	movz	x8, #0xb800
++	movz	x8, #0x5000
++	movk	x8, #0x29, lsl #16
+ .Ltb371fc_fill_mmu\@:
+ 	stp	w7, w7, [x6], #8
+ 	subs	x8, x8, #1
+@@ -583,13 +584,16 @@ SYM_FUNC_END(set_cpu_boot_mode_flag)
+ SYM_FUNC_START(__enable_mmu)
+ #ifdef CONFIG_TB371FC_EARLY_FB_MARKER
+ 	tb371fc_mmu_stage 0xff40, 0x0000, 71
+-#endif
++	/* Diagnostic-only: SM8250 is already known to support 4 KiB pages. */
++	mov	x3, xzr
++#else
+ 	mrs	x3, ID_AA64MMFR0_EL1
+ 	ubfx	x3, x3, #ID_AA64MMFR0_EL1_TGRAN_SHIFT, 4
+ 	cmp     x3, #ID_AA64MMFR0_EL1_TGRAN_SUPPORTED_MIN
+ 	b.lt    __no_granule_support
+ 	cmp     x3, #ID_AA64MMFR0_EL1_TGRAN_SUPPORTED_MAX
+ 	b.gt    __no_granule_support
++#endif
+ #ifdef CONFIG_TB371FC_EARLY_FB_MARKER
+ 	tb371fc_mmu_stage 0xff00, 0x4040, 72
+ #endif
+-- 
+2.43.0

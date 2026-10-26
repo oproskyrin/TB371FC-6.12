@@ -1,0 +1,19 @@
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+@@ -995,3 +995,12 @@
+ 		glbl_rescode_bot_ctrl = 0x3c;
+ 	}
+ 
++	/* Exact working4.19 V56 DPHY values, isolated to this board. */
++	if (!phy->cphy_mode &&
++	    (phy->cfg->quirks & DSI_PHY_7NM_QUIRK_TB371FC_CLK_CFG0)) {
++		vreg_ctrl_0 = 0x51;
++		glbl_rescode_top_ctrl = 0x3d;
++		glbl_rescode_bot_ctrl = 0x39;
++		glbl_str_swi_cal_sel_ctrl = 0x01;
++		glbl_hstx_str_ctrl_0 = 0xff;
++	}
++
+ 	/* de-assert digital and pll power down */
+ 	data = BIT(6) | BIT(5);

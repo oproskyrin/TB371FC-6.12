@@ -1,0 +1,2 @@
+# R129 diagnostic root: exFAT/ext4 are read-only; overlay upper is RAM.
+# All mounts are prepared by initramfs. No automatic block-device mounts.

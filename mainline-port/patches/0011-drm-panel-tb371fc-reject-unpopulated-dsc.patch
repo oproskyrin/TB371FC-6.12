@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000011 Mon Sep 17 00:00:00 2001
+From: TB371FC Linux Project <tb371fc-linux@localhost>
+Date: Wed, 12 Aug 2026 20:18:00 +0500
+Subject: [PATCH] drm/panel: tb371fc: reject unpopulated DSC state
+
+MSM mode_set populates the dynamic DSC fields before panel prepare.  Refuse
+to start the TB371FC command table if that lifecycle contract is ever broken,
+instead of transmitting a syntactically valid but unusable zero-filled PPS.
+---
+ drivers/gpu/drm/panel/panel-novatek-nt36523.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36523.c b/drivers/gpu/drm/panel/panel-novatek-nt36523.c
+index a1443a9b0fa7..39843107bc0a 100644
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36523.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36523.c
+@@ -489,6 +489,15 @@ static int tb371fc_nt36532_init_sequence(struct panel_info *pinfo, bool boe)
+ 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = NULL };
+ 	struct drm_dsc_picture_parameter_set pps;
+ 
++	if (!pinfo->dsc.slice_chunk_size || !pinfo->dsc.initial_dec_delay ||
++	    !pinfo->dsc.scale_increment_interval ||
++	    !pinfo->dsc.nfl_bpg_offset || !pinfo->dsc.slice_bpg_offset ||
++	    !pinfo->dsc.final_offset) {
++		dev_err(pinfo->panel.dev,
++			"TB371FC DSC parameters were not populated before prepare\n");
++		return -EINVAL;
++	}
++
+ 	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xff, 0x20);
+ 	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0xfb, 0x01);
+ 	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x32, 0x72);

@@ -1,0 +1,33 @@
+--- a/drivers/gpu/drm/msm/adreno/adreno_device.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_device.c
+@@ -264,7 +264,13 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	if (of_device_is_compatible(pdev->dev.of_node, "amd,imageon"))
++	/*
++	 * TB371FC: the native display (MDSS/DPU, dual-DSI NT36532) is not supported yet; the
++	 * screen is driven by simpledrm. "tb371fc,headless-gpu" binds the Adreno 650 on its own
++	 * (render node only), like the imageon case.
++	 */
++	if (of_device_is_compatible(pdev->dev.of_node, "amd,imageon") ||
++	    of_property_read_bool(pdev->dev.of_node, "tb371fc,headless-gpu"))
+ 		adreno_device_register_headless();
+ 
+ 	return 0;
+--- a/drivers/gpu/drm/msm/msm_drv.c
++++ b/drivers/gpu/drm/msm/msm_drv.c
+@@ -116,9 +116,13 @@
+ 	 * a2xx comes with its own MMU
+ 	 * On other platforms IOMMU can be declared specified either for the
+ 	 * MDP/DPU device or for its parent, MDSS device.
++	 * TB371FC headless Adreno (no MDSS): buffers are mapped by the GPU's own SMMU, so no VRAM
++	 * carveout is needed.
+ 	 */
+ 	return priv->is_a2xx ||
+ 		device_iommu_mapped(dev->dev) ||
+-		device_iommu_mapped(dev->dev->parent);
++		device_iommu_mapped(dev->dev->parent) ||
++		(!dev->dev->of_node &&
++		 of_find_node_with_property(NULL, "tb371fc,headless-gpu"));
+ }

@@ -1,0 +1,26 @@
+# Manual, console-first Plasma bring-up profile.
+# Do not enable a display manager or automatic graphical target yet.
+plasma-workspace
+plasma-desktop
+kwin
+konsole
+qt6-wayland
+xorg-xwayland
+networkmanager
+bluez
+bluez-utils
+plasma-nm
+kscreen
+plasma-pa
+xdg-desktop-portal-kde
+dolphin
+mesa-utils
+vulkan-freedreno
+vulkan-tools
+pipewire
+pipewire-pulse
+wireplumber
+alsa-utils
+brightnessctl
+upower
+power-profiles-daemon

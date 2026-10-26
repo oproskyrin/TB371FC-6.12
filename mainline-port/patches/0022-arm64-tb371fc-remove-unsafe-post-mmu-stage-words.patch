@@ -1,0 +1,50 @@
+From: TB371FC Linux bring-up <tb371fc@example.invalid>
+Subject: [PATCH] arm64: tb371fc: stop writing physical stage words after MMU enable
+
+The fullscreen r27 trace proved that SCTLR_EL1 was programmed and that
+__enable_mmu returned to __primary_switch.  It then painted stage 8 and
+stopped while tb371fc_early_stage_word wrote the second retained word at
+0xb007f000.  That physical address is not part of the early identity map.
+
+Keep the visible framebuffer bands but do not touch either retained physical
+stage-word slot after the MMU is enabled.  The pre-MMU stage-word writes remain
+unchanged.
+---
+ arch/arm64/kernel/head.S | 6 ------
+ 1 file changed, 6 deletions(-)
+
+diff --git a/arch/arm64/kernel/head.S b/arch/arm64/kernel/head.S
+--- a/arch/arm64/kernel/head.S
++++ b/arch/arm64/kernel/head.S
+@@ -317,4 +317,3 @@ SYM_FUNC_START_LOCAL(__primary_switched)
+ #ifdef CONFIG_TB371FC_EARLY_FB_MARKER
+ 	tb371fc_early_fb_band 0x9d14, 0x0000, 0xff80, 0xff00
+-	tb371fc_early_stage_word 11
+ #endif
+@@ -340,4 +339,3 @@ SYM_FUNC_START_LOCAL(__primary_switched)
+ #ifdef CONFIG_TB371FC_EARLY_FB_MARKER
+ 	tb371fc_early_fb_band 0x9d14, 0x0000, 0xff00, 0x80ff
+-	tb371fc_early_stage_word 12
+ #endif
+@@ -350,4 +348,3 @@ SYM_FUNC_START_LOCAL(__primary_switched)
+ #ifdef CONFIG_TB371FC_EARLY_FB_MARKER
+ 	tb371fc_early_fb_band 0x9d14, 0x0000, 0xffff, 0x80c0
+-	tb371fc_early_stage_word 13
+ #endif
+@@ -655,4 +652,3 @@ SYM_FUNC_START_LOCAL(__primary_switch)
+ #ifdef CONFIG_TB371FC_EARLY_FB_MARKER
+ 	tb371fc_early_fb_band 0x9d14, 0x0000, 0xffff, 0x8000
+-	tb371fc_early_stage_word 8
+ #endif
+@@ -663,4 +659,3 @@ SYM_FUNC_START_LOCAL(__primary_switch)
+ #ifdef CONFIG_TB371FC_EARLY_FB_MARKER
+ 	tb371fc_early_fb_band 0x9d14, 0x0000, 0xff80, 0x00ff
+-	tb371fc_early_stage_word 9
+ #endif
+@@ -670,4 +665,3 @@ SYM_FUNC_START_LOCAL(__primary_switch)
+ #ifdef CONFIG_TB371FC_EARLY_FB_MARKER
+ 	tb371fc_early_fb_band 0x9d14, 0x0000, 0xff80, 0x8080
+-	tb371fc_early_stage_word 10
+ #endif
+-- 
+2.43.0

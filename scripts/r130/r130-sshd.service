@@ -1,0 +1,13 @@
+[Unit]
+Description=TB371FC SSH over isolated USB NCM link
+Requires=r130-usb.service
+After=r130-usb.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/ssh-keygen -A
+ExecStart=/usr/bin/sshd -D -e -f /etc/ssh/sshd_config.r130
+Restart=on-failure
+RestartSec=3s
+StandardOutput=journal+console
+StandardError=journal+console

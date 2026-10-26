@@ -1,0 +1,21 @@
+# Persistent USB-connected TB371FC development laboratory
+bash-completion
+dtc
+ethtool
+evtest
+gdb
+git
+i2c-tools
+iperf3
+iw
+less
+libinput
+pciutils
+rsync
+strace
+tmux
+usbutils
+v4l-utils
+vim
+wireless-regdb
+wpa_supplicant

@@ -1,0 +1,22 @@
+#!/bin/sh
+# Set a sane wall clock from an unauthenticated HTTP Date header.
+# This is a bootstrap fallback for the downstream kernel, where NTP clients
+# currently fail before userspace has a valid clock. HTTPS is intentionally
+# not used because certificate validation cannot work while the clock is 1971.
+set -u
+
+header=$(/usr/bin/curl -4 -sS -D - -o /dev/null --max-time 10 \
+	http://1.1.1.1/ 2>/dev/null | \
+	/usr/bin/sed -n 's/^[Dd]ate:[[:space:]]*//p' | \
+	/usr/bin/tr -d '\r' | /usr/bin/head -n 1)
+[ -n "$header" ] || exit 1
+
+epoch=$(/usr/bin/date -u -d "$header" +%s 2>/dev/null) || exit 1
+case "$epoch" in
+	''|*[!0-9]*) exit 1 ;;
+esac
+[ "$epoch" -ge 1700000000 ] || exit 1
+
+/usr/bin/ln -sfn /usr/share/zoneinfo/Asia/Yekaterinburg /etc/localtime
+/usr/bin/date -u -s "@$epoch" >/dev/null
+/usr/bin/date --iso-8601=seconds

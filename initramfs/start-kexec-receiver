@@ -1,0 +1,36 @@
+#!/bin/sh
+
+set -eu
+payload_dir=/run/tb371fc-kexec
+busybox=busybox
+[ ! -x /run/tb371fc-rescue/busybox ] || busybox=/run/tb371fc-rescue/busybox
+mkdir -p "$payload_dir"
+
+start_receiver() {
+	port=$1
+	name=$2
+	(
+		while :; do
+			rm -f "$payload_dir/$name.part"
+			if "$busybox" nc -l -p "$port" >"$payload_dir/$name.part"; then
+				mv -f "$payload_dir/$name.part" "$payload_dir/$name"
+				echo "received $name ($("$busybox" stat -c %s "$payload_dir/$name") bytes)" \
+					>/dev/console
+			else
+				rm -f "$payload_dir/$name.part"
+				sleep 1
+			fi
+		done
+	) &
+	echo $! >"$payload_dir/receiver-$port.pid"
+}
+
+for pidfile in "$payload_dir"/receiver-*.pid; do
+	[ -r "$pidfile" ] || continue
+	kill "$(cat "$pidfile")" 2>/dev/null || true
+done
+
+start_receiver 2325 Image
+start_receiver 2326 tb371fc-display-test.dtb
+start_receiver 2327 initramfs.cpio.gz
+echo 'kexec receivers: Image=2325 DTB=2326 initramfs=2327'

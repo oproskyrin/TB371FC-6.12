@@ -1,0 +1,63 @@
+#!/bin/sh
+
+# Expose a transient USB shell without touching persistent storage. Mainline
+# uses CDC-ACM; Lenovo's 4.19 kernel has composite/NCM built in but no ACM.
+modprobe libcomposite 2>/dev/null || true
+mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
+
+[ -d /sys/kernel/config/usb_gadget ] || exit 1
+
+gadget=/sys/kernel/config/usb_gadget/tb371fc_diag
+[ -d "$gadget" ] || mkdir -p "$gadget"
+echo 0x1d6b >"$gadget/idVendor"
+
+mkdir -p "$gadget/strings/0x409"
+echo TB371FC-DIAG >"$gadget/strings/0x409/serialnumber"
+echo TB371FC-Linux >"$gadget/strings/0x409/manufacturer"
+echo "TB371FC diagnostic console" >"$gadget/strings/0x409/product"
+
+mkdir -p "$gadget/configs/c.1/strings/0x409"
+have_acm=0
+have_ncm=0
+if mkdir "$gadget/functions/acm.GS0" 2>/dev/null; then
+	ln -s "$gadget/functions/acm.GS0" "$gadget/configs/c.1/acm.GS0"
+	have_acm=1
+fi
+if mkdir "$gadget/functions/ncm.usb0" 2>/dev/null; then
+	# Stable locally-administered addresses prevent Windows from creating a new
+	# adapter identity on every diagnostic boot and make host-side recovery
+	# deterministic. They exist only for this transient USB point-to-point link.
+	echo 02:37:1f:c0:00:02 >"$gadget/functions/ncm.usb0/dev_addr" || exit 1
+	echo 02:37:1f:c0:00:01 >"$gadget/functions/ncm.usb0/host_addr" || exit 1
+	ln -s "$gadget/functions/ncm.usb0" "$gadget/configs/c.1/ncm.usb0"
+	echo usb0 >/run/tb371fc-usb-netdev
+	have_ncm=1
+fi
+
+if [ "$have_acm" = 1 ] && [ "$have_ncm" = 1 ]; then
+	echo 0x0106 >"$gadget/idProduct"
+	echo "CDC ACM and NCM diagnostics" >"$gadget/configs/c.1/strings/0x409/configuration"
+	echo acm+ncm >/run/tb371fc-usb-mode
+elif [ "$have_acm" = 1 ]; then
+	echo 0x0104 >"$gadget/idProduct"
+	echo "CDC ACM console" >"$gadget/configs/c.1/strings/0x409/configuration"
+	echo acm >/run/tb371fc-usb-mode
+elif [ "$have_ncm" = 1 ]; then
+	echo 0x0105 >"$gadget/idProduct"
+	echo "CDC NCM console" >"$gadget/configs/c.1/strings/0x409/configuration"
+	echo ncm >/run/tb371fc-usb-mode
+else
+	echo "Neither ACM nor NCM configfs function is available" >&2
+	exit 1
+fi
+
+for udc_path in /sys/class/udc/*; do
+	[ -e "$udc_path" ] || continue
+	udc=${udc_path##*/}
+	echo "$udc" >"$gadget/UDC"
+	echo "USB diagnostics $(cat /run/tb371fc-usb-mode) bound to $udc"
+	exit 0
+done
+
+echo "No USB device controller is available" >&2
+exit 1

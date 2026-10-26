@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000010 Mon Sep 17 00:00:00 2001
+From: TB371FC Linux Project <tb371fc-linux@localhost>
+Date: Wed, 12 Aug 2026 20:05:00 +0500
+Subject: [PATCH] drm/panel: tb371fc: match stock reset sequence
+
+The live Lenovo device tree specifies five raw reset states, each held for
+10 ms: high, low, high, low, high.  The generic NT36523 sequence has four
+logical states and starts at the opposite physical level for an active-low
+GPIO.  Keep the generic sequence for existing panels and reproduce Lenovo's
+sequence only for the two TB371FC descriptors.
+---
+ drivers/gpu/drm/panel/panel-novatek-nt36523.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36523.c b/drivers/gpu/drm/panel/panel-novatek-nt36523.c
+index d3021462c9ff..a1443a9b0fa7 100644
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36523.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36523.c
+@@ -1171,8 +1171,25 @@ static const struct panel_desc j606f_boe_desc = {
+ 
+ static void nt36523_reset(struct panel_info *pinfo)
+ {
++	if (pinfo->desc == &tb371fc_boe_desc ||
++	    pinfo->desc == &tb371fc_tianma_desc) {
++		/* GPIO is active-low: logical 0 reproduces stock raw HIGH. */
++		gpiod_set_value_cansleep(pinfo->reset_gpio, 0);
++		usleep_range(10000, 11000);
++		gpiod_set_value_cansleep(pinfo->reset_gpio, 1);
++		usleep_range(10000, 11000);
++		gpiod_set_value_cansleep(pinfo->reset_gpio, 0);
++		usleep_range(10000, 11000);
++		gpiod_set_value_cansleep(pinfo->reset_gpio, 1);
++		usleep_range(10000, 11000);
++		gpiod_set_value_cansleep(pinfo->reset_gpio, 0);
++		usleep_range(10000, 11000);
++		return;
++	}
++
+ 	gpiod_set_value_cansleep(pinfo->reset_gpio, 1);
+ 	usleep_range(12000, 13000);
+ 	gpiod_set_value_cansleep(pinfo->reset_gpio, 0);

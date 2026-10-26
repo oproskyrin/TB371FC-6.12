@@ -1,0 +1,117 @@
+From: TB371FC Linux Project <tb371fc-linux@localhost>
+Subject: [PATCH] drm/msm/dpu: add TB371FC SSPP linewidth quirk
+
+The Lenovo TB371FC stock display stack and the working community port both
+limit an individual SSPP to 0x758 (1880) pixels.  Advertising the generic
+SM8250 value of 4096 prevents the modern DPU plane code from splitting the
+2944-pixel-wide primary plane across two SSPPs.
+
+Add a board-specific compatible which reuses the SM8250 catalog and changes
+only max_linewidth.  This lets the existing dpu_plane_split() path perform
+the parallel-pipe assignment without carrying the old downstream SDE plane
+implementation.
+
+---
+ .../bindings/display/msm/qcom,sm8150-dpu.yaml |  1 +
+ .../bindings/display/msm/qcom,sm8250-mdss.yaml|  4 +++-
+ .../drm/msm/disp/dpu1/catalog/dpu_6_0_sm8250.h| 38 ++++++++++++++++++++
+ drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h|  1 +
+ drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c       |  1 +
+ 5 files changed, 44 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/display/msm/qcom,sm8150-dpu.yaml b/Documentation/devicetree/bindings/display/msm/qcom,sm8150-dpu.yaml
+--- a/Documentation/devicetree/bindings/display/msm/qcom,sm8150-dpu.yaml
++++ b/Documentation/devicetree/bindings/display/msm/qcom,sm8150-dpu.yaml
+@@ -15,6 +15,7 @@ properties:
+   compatible:
+     enum:
++      - lenovo,tb371fc-dpu
+       - qcom,sm8150-dpu
+       - qcom,sm8250-dpu
+ 
+diff --git a/Documentation/devicetree/bindings/display/msm/qcom,sm8250-mdss.yaml b/Documentation/devicetree/bindings/display/msm/qcom,sm8250-mdss.yaml
+--- a/Documentation/devicetree/bindings/display/msm/qcom,sm8250-mdss.yaml
++++ b/Documentation/devicetree/bindings/display/msm/qcom,sm8250-mdss.yaml
+@@ -50,7 +50,9 @@ patternProperties:
+ 
+     properties:
+       compatible:
+-        const: qcom,sm8250-dpu
++        enum:
++          - lenovo,tb371fc-dpu
++          - qcom,sm8250-dpu
+ 
+   "^displayport-controller@[0-9a-f]+$":
+     type: object
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_0_sm8250.h b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_0_sm8250.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_0_sm8250.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_0_sm8250.h
+@@ -17,6 +17,17 @@ static const struct dpu_caps sm8250_dpu_caps = {
+ 	.pixel_ram_size = DEFAULT_PIXEL_RAM_SIZE,
+ };
+ 
++static const struct dpu_caps tb371fc_dpu_caps = {
++	.max_mixer_width = DEFAULT_DPU_OUTPUT_LINE_WIDTH,
++	.max_mixer_blendstages = 0xb,
++	.has_src_split = true,
++	.has_dim_layer = true,
++	.has_idle_pc = true,
++	.has_3d_merge = true,
++	.max_linewidth = 1880,
++	.pixel_ram_size = DEFAULT_PIXEL_RAM_SIZE,
++};
++
+ static const struct dpu_mdp_cfg sm8250_mdp = {
+ 	.name = "top_0",
+ 	.base = 0x0, .len = 0x494,
+@@ -388,4 +399,31 @@ const struct dpu_mdss_cfg dpu_sm8250_cfg = {
+ 	.perf = &sm8250_perf_data,
+ };
+ 
++const struct dpu_mdss_cfg dpu_tb371fc_cfg = {
++	.mdss_ver = &sm8250_mdss_ver,
++	.caps = &tb371fc_dpu_caps,
++	.mdp = &sm8250_mdp,
++	.cdm = &dpu_cdm_5_x,
++	.ctl_count = ARRAY_SIZE(sm8250_ctl),
++	.ctl = sm8250_ctl,
++	.sspp_count = ARRAY_SIZE(sm8250_sspp),
++	.sspp = sm8250_sspp,
++	.mixer_count = ARRAY_SIZE(sm8250_lm),
++	.mixer = sm8250_lm,
++	.dspp_count = ARRAY_SIZE(sm8250_dspp),
++	.dspp = sm8250_dspp,
++	.dsc_count = ARRAY_SIZE(sm8250_dsc),
++	.dsc = sm8250_dsc,
++	.pingpong_count = ARRAY_SIZE(sm8250_pp),
++	.pingpong = sm8250_pp,
++	.merge_3d_count = ARRAY_SIZE(sm8250_merge_3d),
++	.merge_3d = sm8250_merge_3d,
++	.intf_count = ARRAY_SIZE(sm8250_intf),
++	.intf = sm8250_intf,
++	.vbif = &sdm845_vbif,
++	.wb_count = ARRAY_SIZE(sm8250_wb),
++	.wb = sm8250_wb,
++	.perf = &sm8250_perf_data,
++};
++
+ #endif
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
+@@ -779,4 +779,5 @@ extern const struct dpu_mdss_cfg dpu_sm7150_cfg;
+ extern const struct dpu_mdss_cfg dpu_sm8250_cfg;
++extern const struct dpu_mdss_cfg dpu_tb371fc_cfg;
+ extern const struct dpu_mdss_cfg dpu_sc7180_cfg;
+ extern const struct dpu_mdss_cfg dpu_sm6115_cfg;
+ extern const struct dpu_mdss_cfg dpu_sm6125_cfg;
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+@@ -1506,5 +1506,6 @@ static const struct of_device_id dpu_dt_match[] = {
+ 	{ .compatible = "qcom,sm7150-dpu", .data = &dpu_sm7150_cfg, },
+ 	{ .compatible = "qcom,sm8150-dpu", .data = &dpu_sm8150_cfg, },
++	{ .compatible = "lenovo,tb371fc-dpu", .data = &dpu_tb371fc_cfg, },
+ 	{ .compatible = "qcom,sm8250-dpu", .data = &dpu_sm8250_cfg, },
+ 	{ .compatible = "qcom,sm8350-dpu", .data = &dpu_sm8350_cfg, },
+ 	{ .compatible = "qcom,sm8450-dpu", .data = &dpu_sm8450_cfg, },

@@ -1,0 +1,47 @@
+#!/bin/sh
+set -eu
+
+payload_dir=/usr/local/share/tb371fc-linux7-r13-48bit-mm
+image=$payload_dir/Image
+dtb=$payload_dir/sm8250-lenovo-tb371fc-arch-test.dtb
+initramfs=$payload_dir/initramfs-7.1.8-r9-graphics-fingerprint.cpio.gz
+state=/run/tb371fc-linux7-r13.state
+kexec=/bin/kexec
+[ -x "$kexec" ] || kexec=/run/tb371fc-rescue/kexec
+[ -x "$kexec" ] || { echo 'kexec binary is unavailable' >&2; exit 1; }
+
+verify() {
+	file=$1
+	expected=$2
+	[ -s "$file" ] || { echo "missing payload: $file" >&2; exit 1; }
+	actual=$(sha256sum "$file" | awk '{print $1}')
+	[ "$actual" = "$expected" ] || {
+		echo "SHA-256 mismatch: $file" >&2
+		echo "expected $expected" >&2
+		echo "actual   $actual" >&2
+		exit 1
+	}
+}
+
+[ "$(uname -r)" = '4.19.157-perf-v56.5+' ] || {
+	echo "refusing r13 handoff from unexpected kernel: $(uname -r)" >&2
+	exit 1
+}
+[ -f /etc/tb371fc-development-image ] || {
+	echo 'Arch development root marker is missing' >&2
+	exit 1
+}
+
+verify "$image" e3757ef41fdfb7541bb77510bfb309a33920d69cf38fd276329f5dcfd112990f
+verify "$dtb" 5e7785ebbb7de0f79f7ce4f625da98aa63a8a6cb77451972497adc8dee67ce03
+verify "$initramfs" 82f923e47a07e9c6b9ee6c902d2c7e3506eeaf0f0fb79e0d47a4e7718c99eae1
+
+cmdline='earlycon=qcom_geni,0x988000 console=ttyMSM0,115200n8 console=tty0 keep_bootcon ignore_loglevel log_buf_len=4M initcall_debug rdinit=/init root=/dev/ram0 rw fw_devlink=permissive clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=-1 swiotlb=2048'
+
+rm -f "$state"
+"$kexec" -u 2>/dev/null || true
+"$kexec" -c -l "$image" --dtb="$dtb" --initrd="$initramfs" \
+	--append="$cmdline"
+printf '%s\n' 'loaded-linux-7.1.8-r13-48bit-mm-via-v56.5' >"$state"
+sync
+echo 'Linux 7.1.8 r13 48-bit MM payload verified and loaded in RAM; not executed.'

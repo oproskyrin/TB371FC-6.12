@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000009 Mon Sep 17 00:00:00 2001
+From: TB371FC Linux Project <tb371fc-linux@localhost>
+Date: Wed, 12 Aug 2026 19:10:00 +0500
+Subject: [PATCH] drm/panel: tb371fc: log packed DSC PPS once
+
+Print the exact 128-byte payload used for the first native-display test.  It
+lets the serial/USB log prove whether mainline generated the same DSC geometry
+as the known-good Lenovo payload even when the panel cannot decode the frame.
+---
+ drivers/gpu/drm/panel/panel-novatek-nt36523.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/gpu/drm/panel/panel-novatek-nt36523.c b/drivers/gpu/drm/panel/panel-novatek-nt36523.c
+index b75fca2be54e..d3021462c9ff 100644
+--- a/drivers/gpu/drm/panel/panel-novatek-nt36523.c
++++ b/drivers/gpu/drm/panel/panel-novatek-nt36523.c
+@@ -594,6 +594,10 @@ static int tb371fc_nt36532_init_sequence(struct panel_info *pinfo, bool boe)
+ 	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x53, 0x2c);
+ 	mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi0, dsi1, 0x55, 0x01);
+ 	drm_dsc_pps_payload_pack(&pps, &pinfo->dsc);
++	print_hex_dump(KERN_INFO, "TB371FC mainline DSC PPS: ",
++		       DUMP_PREFIX_OFFSET, 16, 1, &pps, sizeof(pps), false);
++
+ 	mipi_dsi_dual(mipi_dsi_picture_parameter_set_multi, &dsi_ctx,
+ 		      dsi0, dsi1, &pps);
+ 

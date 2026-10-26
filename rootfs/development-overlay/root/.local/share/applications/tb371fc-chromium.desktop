@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Chromium (TB371FC safe mode)
+Comment=Chromium with the stable V56 software rendering profile
+Exec=/usr/local/bin/tb371fc-chromium %U
+Icon=chromium
+Terminal=false
+Categories=Network;WebBrowser;
+StartupNotify=true
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;

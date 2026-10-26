@@ -1,0 +1,12 @@
+#!/bin/sh
+
+required_token=LOGS_COPIED_REBOOT_TO_BOOTLOADER
+if [ "${1:-}" != "$required_token" ]; then
+	echo "Refusing reboot." >&2
+	echo "Usage: $0 $required_token" >&2
+	exit 2
+fi
+module=/lib/modules/4.19.325-cip134-st18-perf+/extra/reboot-bootloader.ko
+[ -s "$module" ] || { echo "Missing reboot module: $module" >&2; exit 1; }
+echo 'Rebooting diagnostic Linux to bootloader. RAM logs will be lost.'
+insmod "$module"

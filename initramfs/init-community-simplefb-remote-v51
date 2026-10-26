@@ -1,0 +1,97 @@
+#!/bin/sh
+
+# TB371FC V51: the physically verified V50 simplefb path plus a deterministic
+# remote-control channel.  Android/UFS filesystems are never mounted.
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+busybox mkdir -p /proc /sys /run /tmp /dev/pts /sys/kernel/debug
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+
+[ -c /dev/console ] || busybox mknod -m 600 /dev/console c 5 1
+[ -c /dev/null ] || busybox mknod -m 666 /dev/null c 1 3
+[ -c /dev/zero ] || busybox mknod -m 666 /dev/zero c 1 5
+[ -c /dev/tty ] || busybox mknod -m 666 /dev/tty c 5 0
+
+hostname tb371fc-community-v51
+dmesg -n 8
+busybox mkdir -p /run/tb371fc-v51 /run/tb371fc-rescue
+echo starting >/run/tb371fc-v51/status
+
+start_serial_ash() {
+	for _ in $(busybox seq 1 30); do
+		[ -c /dev/ttyGS0 ] && break
+		busybox sleep 1
+	done
+	[ -c /dev/ttyGS0 ] || return 1
+	(
+		while :; do
+			busybox stty -F /dev/ttyGS0 sane 115200 2>/dev/null || true
+			busybox setsid busybox cttyhack busybox sh -i \
+				</dev/ttyGS0 >/dev/ttyGS0 2>&1
+			busybox sleep 1
+		done
+	) &
+	echo $! >/run/tb371fc-serial-ash.pid
+	echo acm-ash-ready >/run/tb371fc-v51/usb-status
+}
+
+if /bin/setup-usb-remote-v51 >/run/tb371fc-v51/setup-usb.txt 2>&1; then
+	usb_mode=$(busybox cat /run/tb371fc-usb-mode 2>/dev/null || true)
+	start_serial_ash || echo acm-ash-failed >/run/tb371fc-v51/usb-status
+else
+	echo usb-gadget-failed >/run/tb371fc-v51/usb-status
+	usb_mode=none
+fi
+
+for _ in $(busybox seq 1 30); do
+	[ -r /sys/class/graphics/fb0/dev ] && break
+	busybox sleep 1
+done
+
+if [ -r /sys/class/graphics/fb0/dev ] && [ ! -c /dev/fb0 ]; then
+	devnum=$(busybox cat /sys/class/graphics/fb0/dev)
+	major=${devnum%%:*}
+	minor=${devnum##*:}
+	busybox mknod -m 600 /dev/fb0 c "$major" "$minor"
+fi
+
+if [ -c /dev/fb0 ]; then
+	echo simplefb-ready >/run/tb371fc-v51/status
+	/bin/framebuffer-pattern /dev/fb0 >/run/tb371fc-v51/framebuffer-pattern.txt 2>&1 || true
+else
+	echo simplefb-missing >/run/tb371fc-v51/status
+fi
+
+busybox sleep 5
+# The diagnostic command line keeps ignore_loglevel enabled long enough to
+# capture every early boot message.  Disable it before presenting the stable
+# local console; otherwise the downstream missing-exfg battery driver floods
+# tty0 with KERN_ERR messages forever.  The complete ring buffer is still
+# collected below and remains available through the serial ash session.
+if [ -w /sys/module/printk/parameters/ignore_loglevel ]; then
+	echo N >/sys/module/printk/parameters/ignore_loglevel
+fi
+dmesg -n 1
+if [ -c /dev/tty0 ]; then
+	busybox printf '\033[2J\033[H' >/dev/tty0
+	busybox printf 'TB371FC ARCH LINUX V51\n\n' >/dev/tty0
+	busybox printf 'Internal display console: WORKING\n' >/dev/tty0
+	busybox printf 'Simple framebuffer no-map: active\n' >/dev/tty0
+	busybox printf 'USB remote mode: %s\n' "$usb_mode" >/dev/tty0
+	busybox printf 'Serial ash: ttyGS0 / Windows COM port\n' >/dev/tty0
+	busybox printf 'Safe initramfs control; Arch handoff deferred.\n' >/dev/tty0
+	busybox printf '\nNo userspace DRM modeset.\n' >/dev/tty0
+fi
+
+busybox cat /proc/fb >/run/tb371fc-v51/proc-fb.txt 2>&1
+busybox dmesg >/run/tb371fc-v51/dmesg.txt 2>&1
+
+echo serial-rescue-hold >/run/tb371fc-v51/status
+while :; do busybox sleep 60; done

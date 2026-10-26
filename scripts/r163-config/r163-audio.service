@@ -1,0 +1,8 @@
+[Unit]
+Description=TB371FC R163 audio bring-up (RAM)
+After=systemd-udevd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh /run/r130/config/r163-audio.sh

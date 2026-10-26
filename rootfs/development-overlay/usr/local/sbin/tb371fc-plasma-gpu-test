@@ -1,0 +1,42 @@
+#!/bin/sh
+# Start Plasma on the vendor display stack with OpenGL provided by Zink over
+# the isolated KGSL Turnip build.  This never replaces the system Mesa files.
+set -eu
+
+icd=/opt/tb371fc-mesa-kgsl-26.1.7/share/vulkan/icd.d/freedreno_icd.aarch64.json
+log=/var/log/tb371fc-plasma-gpu.log
+
+case "$(uname -r)" in
+	4.19.157-perf-v56*) ;;
+	*) echo 'Refusing KGSL Plasma test outside the V56 bridge kernel.' >&2; exit 2 ;;
+esac
+[ -s "$icd" ] || {
+	echo "Missing isolated KGSL Turnip ICD: $icd" >&2
+	exit 3
+}
+pgrep -x kwin_wayland >/dev/null 2>&1 && {
+	echo 'KWin is already running; stop the current Plasma session first.' >&2
+	exit 4
+}
+
+mkdir -p /run/user/0
+chmod 0700 /run/user/0
+export HOME=/root USER=root LOGNAME=root
+export XDG_RUNTIME_DIR=/run/user/0
+export XDG_SEAT=seat0
+export XDG_SESSION_TYPE=wayland
+export XDG_SESSION_DESKTOP=KDE
+export XDG_CURRENT_DESKTOP=KDE
+export LIBSEAT_BACKEND=seatd
+export KWIN_DRM_DEVICES=/dev/dri/card0
+export KWIN_DRM_NO_DIRECT_SCANOUT=1
+export PLASMA_USE_QT_SCALING=1
+export QT_SCALE_FACTOR=1
+export QT_IM_MODULE=qtvirtualkeyboard
+unset LIBGL_ALWAYS_SOFTWARE
+export MESA_LOADER_DRIVER_OVERRIDE=zink
+export GALLIUM_DRIVER=zink
+export VK_ICD_FILENAMES="$icd"
+
+echo "=== $(date -Iseconds 2>/dev/null || date) KGSL Plasma ===" >>"$log"
+exec /usr/bin/dbus-run-session -- /usr/bin/startplasma-wayland >>"$log" 2>&1

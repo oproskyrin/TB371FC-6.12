@@ -1,0 +1,8 @@
+[Unit]
+Description=TB371FC R171 Bluetooth bring-up (QCA6390 over UART6)
+After=systemd-udevd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh /run/r130/config/r171-bt.sh

@@ -1,0 +1,16 @@
+# private data and build output — never commit
+artifacts/
+private/
+diagnostics/
+*.img
+*.raw
+*.ko
+*.dtb
+*.cpio*
+*.tar*
+*.zst
+*.pyc
+__pycache__/
+.tmp*
+*wpa*.conf
+id_ed25519*

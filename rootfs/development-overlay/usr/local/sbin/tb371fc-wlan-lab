@@ -1,0 +1,82 @@
+#!/bin/bash
+set -euo pipefail
+
+activation_token=I_UNDERSTAND_SINGLE_WLAN_ACTIVATION
+scan_token=I_UNDERSTAND_PASSIVE_WIFI_SCAN
+sentinel=/run/tb371fc/wlan-activation-used
+log_dir=/var/log/tb371fc-wlan
+
+usage() {
+	echo "Usage: $0 activate $activation_token" >&2
+	echo "       $0 inspect" >&2
+	echo "       $0 passive-scan $scan_token" >&2
+	exit 2
+}
+
+capture() {
+	local name=$1
+	mkdir -p "$log_dir"
+	{
+		echo "== $name =="
+		date --iso-8601=seconds
+		ip -details link
+		iw dev 2>&1 || true
+		iw reg get 2>&1 || true
+		cat /proc/net/wireless 2>/dev/null || true
+		dmesg | grep -Ei 'wlan|qcacld|hdd|cnss|mhi|qmi|firmware|wcnss|qca6390' || true
+	} >"$log_dir/$name.txt" 2>&1
+}
+
+case ${1:-} in
+activate)
+	[[ ${2:-} == "$activation_token" ]] || usage
+	[[ ! -e $sentinel ]] || {
+		echo 'WLAN was already activated during this Linux boot.' >&2
+		exit 1
+	}
+	[[ $(cat /sys/class/wlan/wlan/dev 2>/dev/null || true) == 491:0 ]] || {
+		echo 'Unexpected or missing /sys/class/wlan/wlan.' >&2
+		exit 1
+	}
+	[[ -c /dev/wlan ]] || mknod -m 600 /dev/wlan c 491 0
+	pidof qrtr-ns >/dev/null
+	grep -q 'WCNSS\|service' /run/qrtr-lookup.log
+	grep -q '^CONFIG_CNSS2_DIAGNOSTIC_NO_SSR=y$' < <(zcat /proc/config.gz)
+	grep -q '^CONFIG_CNSS2_DIAGNOSTIC_SINGLE_QMI_CLIENT=y$' < <(zcat /proc/config.gz)
+	[[ $(sha256sum /usr/lib/firmware/wlan/qca_cld/WCNSS_qcom_cfg.ini | awk '{print $1}') == \
+		ceebfa9bd1226ec748ecf28c5ed5543cb184fd8a55dd34ac1611300903598b17 ]]
+	mkdir -p "$(dirname "$sentinel")" "$log_dir"
+	: >"$sentinel"
+	dmesg >"$log_dir/dmesg-before.txt"
+	printf 'ON\n' >/dev/wlan
+	for ((attempt = 0; attempt < 900; attempt++)); do
+		if [[ -d /sys/class/net/wlan0 ]]; then
+			ip link set wlan0 up
+			sleep 2
+			capture activated
+			echo 'wlan0 is administratively up; no scan or association was performed.'
+			exit 0
+		fi
+		sleep 0.1
+	done
+	capture activation-timeout
+	echo 'wlan0 did not appear within 90 seconds.' >&2
+	exit 1
+	;;
+inspect)
+	capture inspect
+	cat "$log_dir/inspect.txt"
+	;;
+passive-scan)
+	[[ ${2:-} == "$scan_token" ]] || usage
+	[[ -d /sys/class/net/wlan0 ]] || {
+		echo 'wlan0 is absent.' >&2
+		exit 1
+	}
+	mkdir -p "$log_dir"
+	iw dev wlan0 scan passive | tee "$log_dir/passive-scan.txt"
+	;;
+*)
+	usage
+	;;
+esac

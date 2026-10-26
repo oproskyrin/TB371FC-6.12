@@ -1,0 +1,120 @@
+#!/bin/sh
+
+required_token=I_UNDERSTAND_SINGLE_WLAN_ACTIVATION
+if [ "${1:-}" != "$required_token" ]; then
+	echo "Refusing WLAN activation." >&2
+	echo "Usage: $0 $required_token" >&2
+	exit 2
+fi
+if [ ! -c /dev/wlan ]; then
+	device_number=$(cat /sys/class/wlan/wlan/dev 2>/dev/null || true)
+	[ "$device_number" = 491:0 ] || {
+		echo "Unexpected or missing WLAN device number: $device_number" >&2
+		exit 1
+	}
+	busybox mknod -m 600 /dev/wlan c 491 0
+fi
+[ ! -e /run/tb371fc-wlan-activation-used ] || {
+	echo 'The one permitted WLAN activation was already attempted in this boot.' >&2
+	exit 1
+}
+busybox pidof qrtr-ns >/dev/null 2>&1 || {
+	echo 'qrtr-ns must be running before WLAN activation.' >&2
+	exit 1
+}
+grep -q 'WCNSS\|service' /run/qrtr-lookup.log 2>/dev/null || {
+	echo 'qrtr-lookup must complete and record service discovery first.' >&2
+	exit 1
+}
+bdf_count=$(find /usr/lib/firmware/qca6390 -maxdepth 1 -type f -name 'bdwlan.*' 2>/dev/null | busybox wc -l)
+[ "$bdf_count" -eq 28 ] || {
+	echo "Expected 28 stock BDF files, found $bdf_count" >&2
+	exit 1
+}
+busybox zcat /proc/config.gz 2>/dev/null | grep -q '^CONFIG_CNSS2_DIAGNOSTIC_NO_SSR=y$' || {
+	echo 'Diagnostic no-SSR kernel guard is not enabled.' >&2
+	exit 1
+}
+busybox zcat /proc/config.gz 2>/dev/null | grep -q '^CONFIG_CNSS2_DIAGNOSTIC_SINGLE_QMI_CLIENT=y$' || {
+	echo 'Diagnostic single-client QMI mode is not enabled.' >&2
+	exit 1
+}
+expected_ini_sha256=ceebfa9bd1226ec748ecf28c5ed5543cb184fd8a55dd34ac1611300903598b17
+ini=/usr/lib/firmware/wlan/qca_cld/WCNSS_qcom_cfg.ini
+actual_ini_sha256=$(busybox sha256sum "$ini" 2>/dev/null | busybox awk '{print $1}')
+[ "$actual_ini_sha256" = "$expected_ini_sha256" ] || {
+	echo "Missing or unexpected stock WLAN INI: $actual_ini_sha256" >&2
+	exit 1
+}
+
+capture_host_state() {
+	label=$1
+	output="/run/wlan-host-state-$label.txt"
+	{
+		echo "TB371FC WLAN host state: $label"
+		echo "Uptime: $(cat /proc/uptime 2>/dev/null || true)"
+		echo
+		echo '== network interfaces =='
+		ip -details link 2>/dev/null || ip link 2>/dev/null || true
+		ip addr 2>/dev/null || true
+		cat /proc/net/wireless 2>/dev/null || true
+		for interface in /sys/class/net/*; do
+			[ -e "$interface" ] || continue
+			echo "-- $interface"
+			readlink -f "$interface/device/driver" 2>/dev/null || true
+			for attribute in address carrier operstate type uevent; do
+				grep -H . "$interface/$attribute" 2>/dev/null || true
+			done
+		done
+		echo
+		echo '== rfkill =='
+		for rfkill in /sys/class/rfkill/*; do
+			[ -e "$rfkill" ] || continue
+			echo "-- $rfkill"
+			for attribute in name type state soft hard; do
+				grep -H . "$rfkill/$attribute" 2>/dev/null || true
+			done
+		done
+		echo
+		echo '== PCI, MHI and platform driver bindings =='
+		find /sys/bus/pci/drivers /sys/bus/mhi/drivers /sys/bus/platform/drivers \
+			-maxdepth 2 -type l -print 2>/dev/null | \
+			grep -Ei 'wlan|cnss|mhi|ath|17cb|1101' || true
+		echo
+		echo '== WLAN-related modules and parameters =='
+		grep -Ei 'wlan|cnss|mhi|ath11' /proc/modules 2>/dev/null || true
+		find /sys/module -maxdepth 3 -type f \
+			\( -path '*/parameters/*' -o -name taint -o -name initstate \) \
+			-print -exec cat {} \; 2>/dev/null | \
+			grep -Ei -A1 'wlan|cnss|mhi|ath11' || true
+		echo
+		echo '== firmware requests and selected dmesg =='
+		find /sys/class/firmware -maxdepth 2 -print 2>/dev/null || true
+		dmesg | grep -Ei 'wlan|qcacld|hdd|cnss|mhi|qmi|firmware|fw_ready|wcnss|qca6390|17cb|1101' || true
+	} >"$output" 2>&1
+}
+
+# Create the sentinel before touching the driver, so a disconnect cannot cause
+# an accidental second request during the same Linux boot.
+: >/run/tb371fc-wlan-activation-used
+dmesg >/run/dmesg-before-wlan.txt
+echo 'Sending the exact three bytes 4f 4e 0a once.'
+printf 'ON\n' >/dev/wlan 2>/run/wlan-write-error.txt || true
+sleep 25
+capture_host_state early
+dmesg >/run/dmesg-after-wlan.txt
+cat /run/qrtr-ns.log /run/qrtr-lookup.log 2>/dev/null > /run/qrtr-after-wlan.txt || true
+: >/run/cnss-ipc-after-wlan.txt
+for ipc_log in /sys/kernel/debug/ipc_logging/cnss*/log \
+	/sys/kernel/debug/ipc_logging/mhi*/log; do
+	[ -r "$ipc_log" ] || continue
+	echo "== $ipc_log ==" >>/run/cnss-ipc-after-wlan.txt
+	busybox timeout 3 cat "$ipc_log" >>/run/cnss-ipc-after-wlan.txt 2>&1 || true
+done
+# A missing firmware-class object can take about one minute to time out. Keep
+# an additional passive window so an unattended test captures that terminal
+# state without ever issuing a second activation.
+sleep 45
+capture_host_state final
+dmesg >/run/dmesg-final-wlan.txt
+echo 'WLAN observation window completed. Copy /run/*wlan*, /run/qrtr-* and /run/cnss-ipc-* now.'

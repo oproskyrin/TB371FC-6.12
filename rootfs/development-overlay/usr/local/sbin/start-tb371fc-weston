@@ -1,0 +1,24 @@
+#!/bin/sh
+set -eu
+
+bb=/run/tb371fc-rescue/busybox
+runtime=/run/user/0
+mkdir -p "$runtime"
+chmod 0700 "$runtime"
+
+"$bb" mdev -s
+if [ ! -S /run/seatd.sock ]; then
+	seatd -u root -g video -l info >/var/log/tb371fc-seatd.log 2>&1 &
+	sleep 1
+fi
+
+export XDG_RUNTIME_DIR="$runtime"
+export XDG_SEAT=seat0
+export LIBSEAT_BACKEND=seatd
+export LD_LIBRARY_PATH=/opt/libudev-zero/lib
+export LD_PRELOAD=/opt/libudev-zero/lib/libweston-tb371fc-shim-v8-no-roi.so
+
+exec weston --backend=drm --renderer=pixman --drm-device=card0 \
+	--current-mode --continue-without-input --idle-time=0 \
+	--config=/etc/xdg/weston/weston.ini \
+	--log=/var/log/tb371fc-weston.log

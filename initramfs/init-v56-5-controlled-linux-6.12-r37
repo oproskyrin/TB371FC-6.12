@@ -1,0 +1,64 @@
+#!/bin/sh
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+busybox mkdir -p /proc /sys /run /tmp /dev/pts /sys/kernel/debug
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+
+[ -c /dev/console ] || busybox mknod -m 600 /dev/console c 5 1
+[ -c /dev/null ] || busybox mknod -m 666 /dev/null c 1 3
+[ -c /dev/zero ] || busybox mknod -m 666 /dev/zero c 1 5
+[ -c /dev/tty ] || busybox mknod -m 666 /dev/tty c 5 0
+
+hostname tb371fc-controlled-r37
+dmesg -n 8
+busybox mkdir -p /run/tb371fc-v56 /run/tb371fc-rescue/linux-6.12-r37
+busybox cp /bin/busybox /run/tb371fc-rescue/busybox || exec setsid cttyhack sh
+busybox ln -sf busybox /run/tb371fc-rescue/sh
+
+if /bin/setup-usb-acm-v56 >/run/tb371fc-v56/setup-usb.txt 2>&1; then
+	echo acm-ready >/run/tb371fc-v56/usb-status
+else
+	echo acm-failed >/run/tb371fc-v56/usb-status
+fi
+
+busybox cp /opt/tb371fc-linux-6.12-r37/Image /run/tb371fc-rescue/linux-6.12-r37/Image
+busybox cp /opt/tb371fc-linux-6.12-r37/board.dtb /run/tb371fc-rescue/linux-6.12-r37/board.dtb
+busybox cp /opt/tb371fc-linux-6.12-r37/initramfs.cpio.gz /run/tb371fc-rescue/linux-6.12-r37/initramfs.cpio.gz
+for helper in load-linux-6.12-r37 execute-linux-6.12-r37 status-linux-6.12-r37; do
+	busybox cp "/bin/$helper" "/run/tb371fc-rescue/$helper"
+	busybox chmod 0755 "/run/tb371fc-rescue/$helper"
+done
+echo not-loaded >/run/tb371fc-linux612-r37.state
+
+for _ in $(busybox seq 1 30); do
+	[ -r /sys/class/graphics/fb0/dev ] && break
+	busybox sleep 1
+done
+if [ -r /sys/class/graphics/fb0/dev ] && [ ! -c /dev/fb0 ]; then
+	devnum=$(busybox cat /sys/class/graphics/fb0/dev)
+	busybox mknod -m 600 /dev/fb0 c "${devnum%%:*}" "${devnum##*:}"
+fi
+
+busybox sleep 3
+[ ! -w /sys/module/printk/parameters/ignore_loglevel ] || echo N >/sys/module/printk/parameters/ignore_loglevel
+dmesg -n 1
+if [ -c /dev/tty0 ]; then
+	usb_status=$(busybox cat /run/tb371fc-v56/usb-status 2>/dev/null || true)
+	busybox printf '\033[2J\033[H' >/dev/tty0
+	busybox printf 'TB371FC ARCH LINUX V56.5 CONTROLLED LOADER r37\n\n' >/dev/tty0
+	busybox printf 'Known-good display and Arch/KDE path: READY\n' >/dev/tty0
+	busybox printf 'USB ACM transport: %s\n' "$usb_status" >/dev/tty0
+	busybox printf 'Linux 6.12 diagnostic: safe head.S full-screen stages\n' >/dev/tty0
+	busybox printf 'Starting Arch/KDE and authenticated SSH...\n' >/dev/tty0
+fi
+
+busybox dmesg >/run/tb371fc-v56/dmesg-r37-first-stage.txt 2>&1
+busybox sleep 3
+exec /bin/boot-arch-development-rootfs

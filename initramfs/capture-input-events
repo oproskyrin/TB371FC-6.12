@@ -1,0 +1,29 @@
+#!/bin/sh
+
+event=${1:-}
+seconds=${2:-20}
+output=${3:-/run/tb371fc-input-events.txt}
+case "$event" in
+	/dev/input/event[0-9]*) ;;
+	*) echo "Usage: $0 /dev/input/eventN [SECONDS] [OUTPUT]" >&2; exit 2 ;;
+esac
+case "$seconds" in
+	*[!0-9]*|'') echo "SECONDS must be an integer" >&2; exit 2 ;;
+esac
+if [ ! -c "$event" ]; then
+	event_name=${event##*/}
+	device_number=$(cat "/sys/class/input/$event_name/dev" 2>/dev/null || true)
+	major=${device_number%%:*}
+	minor=${device_number#*:}
+	case "$major:$minor" in
+		13:[0-9]*) ;;
+		*) echo "Unexpected or missing input device number: $device_number" >&2; exit 1 ;;
+	esac
+	mkdir -p /dev/input
+	busybox mknod -m 600 "$event" c "$major" "$minor"
+fi
+
+echo "Capturing $event for $seconds seconds into $output"
+/run/tb371fc-rescue/busybox timeout "$seconds" \
+	/run/tb371fc-rescue/input-monitor "$event" >"$output" 2>&1 || true
+echo "Input capture complete: $output"

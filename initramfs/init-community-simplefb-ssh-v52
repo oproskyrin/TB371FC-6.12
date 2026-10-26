@@ -1,0 +1,96 @@
+#!/bin/sh
+
+# TB371FC V52: physically proven V50 simplefb plus NCM-only Arch/OpenSSH.
+# Android/UFS filesystems are never mounted.  The only persistent mount is the
+# explicitly authorised Arch development container on microSD.
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+busybox mkdir -p /proc /sys /run /tmp /dev/pts /sys/kernel/debug
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+
+[ -c /dev/console ] || busybox mknod -m 600 /dev/console c 5 1
+[ -c /dev/null ] || busybox mknod -m 666 /dev/null c 1 3
+[ -c /dev/zero ] || busybox mknod -m 666 /dev/zero c 1 5
+[ -c /dev/tty ] || busybox mknod -m 666 /dev/tty c 5 0
+
+hostname tb371fc-community-v52
+dmesg -n 8
+busybox mkdir -p /run/tb371fc-v52 /run/tb371fc-rescue
+echo starting >/run/tb371fc-v52/status
+
+start_ncm_rescue() {
+	/bin/setup-usb-ncm-v52 >/run/tb371fc-v52/setup-usb.txt 2>&1 || return 1
+	netdev=$(busybox cat /run/tb371fc-usb-netdev 2>/dev/null || true)
+	[ -n "$netdev" ] || return 1
+	for _ in $(busybox seq 1 30); do
+		[ -e "/sys/class/net/$netdev" ] && break
+		busybox sleep 1
+	done
+	[ -e "/sys/class/net/$netdev" ] || return 1
+	busybox ip link set "$netdev" up || return 1
+	busybox ip addr add 169.254.77.2/16 dev "$netdev" 2>/dev/null || \
+		busybox ifconfig "$netdev" 169.254.77.2 netmask 255.255.0.0 up
+	busybox cp /bin/busybox /run/tb371fc-rescue/busybox
+	busybox ln -sf busybox /run/tb371fc-rescue/sh
+	( exec busybox nc -lk -p 2323 -e /run/tb371fc-rescue/sh ) &
+	echo $! >/run/tb371fc-rescue-shell.pid
+	(
+		while :; do
+			busybox ip addr add 169.254.77.2/16 dev "$netdev" 2>/dev/null || true
+			busybox ip link set "$netdev" up 2>/dev/null || true
+			busybox sleep 2
+		done
+	) &
+	echo $! >/run/tb371fc-network-watchdog.pid
+	echo ncm-ready-169.254.77.2 >/run/tb371fc-v52/usb-status
+}
+
+start_ncm_rescue || echo ncm-failed >/run/tb371fc-v52/usb-status
+
+for _ in $(busybox seq 1 30); do
+	[ -r /sys/class/graphics/fb0/dev ] && break
+	busybox sleep 1
+done
+if [ -r /sys/class/graphics/fb0/dev ] && [ ! -c /dev/fb0 ]; then
+	devnum=$(busybox cat /sys/class/graphics/fb0/dev)
+	major=${devnum%%:*}
+	minor=${devnum##*:}
+	busybox mknod -m 600 /dev/fb0 c "$major" "$minor"
+fi
+
+if [ -c /dev/fb0 ]; then
+	echo simplefb-ready >/run/tb371fc-v52/status
+	/bin/framebuffer-pattern /dev/fb0 >/run/tb371fc-v52/framebuffer-pattern.txt 2>&1 || true
+else
+	echo simplefb-missing >/run/tb371fc-v52/status
+fi
+
+busybox sleep 5
+if [ -w /sys/module/printk/parameters/ignore_loglevel ]; then
+	echo N >/sys/module/printk/parameters/ignore_loglevel
+fi
+dmesg -n 1
+if [ -c /dev/tty0 ]; then
+	usb_status=$(busybox cat /run/tb371fc-v52/usb-status 2>/dev/null || true)
+	busybox printf '\033[2J\033[H' >/dev/tty0
+	busybox printf 'TB371FC ARCH LINUX V52\n\n' >/dev/tty0
+	busybox printf 'Internal display console: WORKING\n' >/dev/tty0
+	busybox printf 'USB NCM: %s\n' "$usb_status" >/dev/tty0
+	busybox printf 'Arch OpenSSH: 169.254.77.2 port 2222\n' >/dev/tty0
+	busybox printf 'Starting persistent development root...\n\n' >/dev/tty0
+	busybox printf 'No userspace DRM modeset.\n' >/dev/tty0
+fi
+
+busybox cat /proc/fb >/run/tb371fc-v52/proc-fb.txt 2>&1
+busybox dmesg >/run/tb371fc-v52/dmesg.txt 2>&1
+echo entering-arch-development-root >/run/tb371fc-v52/status
+busybox sleep 3
+exec /bin/boot-arch-development-rootfs
+

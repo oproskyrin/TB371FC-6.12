@@ -1,0 +1,29 @@
+From: TB371FC Linux bring-up <tb371fc@example.invalid>
+Subject: [PATCH] arm64: tb371fc: make fullscreen marker post-MMU safe
+
+The marker painted the framebuffer and then wrote its numeric stage to
+0x9d5ff000.  That page is not covered by the early identity mapping after
+SCTLR_EL1.M is set, so the diagnostic itself faulted after painting stage 75
+or 81.  Keep the visual marker and remove the retained physical write.
+---
+ arch/arm64/kernel/head.S | 10 ----------
+ 1 file changed, 10 deletions(-)
+
+diff --git a/arch/arm64/kernel/head.S b/arch/arm64/kernel/head.S
+--- a/arch/arm64/kernel/head.S
++++ b/arch/arm64/kernel/head.S
+@@ -138,12 +138,2 @@
+ 	b.ne	.Ltb371fc_fill_mmu\@
+-	movz	x9, #0xf000
+-	movk	x9, #0x9d5f, lsl #16
+-	movz	w7, #0x3337
+-	movk	w7, #0x5442, lsl #16
+-	str	w7, [x9]
+-	movz	w7, #\stage
+-	str	w7, [x9, #4]
+-	mvn	w7, w7
+-	str	w7, [x9, #8]
+-	dsb	sy
+ 	.endm
+-- 
+2.43.0

@@ -1,0 +1,70 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Lenovo TB371FC mainline Arch handoff diagnostic.
+ *
+ * Keep the conservative stage-0 contract (no UFS, GPU or native display)
+ * and add only the removable microSD path needed to reach the development
+ * rootfs.  The stock kernel identifies GPIO75 as the enable for the external
+ * BayHub BH201 SD redriver.  Mainline has no BH201 tuning driver, so the first
+ * test keeps the redriver enabled, stays at 3.3 V and caps the bus at 25 MHz.
+ *
+ * This is an attended RAM-boot DTB.  It must never be flashed as a permanent
+ * device tree and must not replace the normal board description.
+ */
+
+/dts-v1/;
+
+#include "sm8250-lenovo-tb371fc-stage0.dts"
+
+/ {
+	model = "Lenovo TB371FC Arch microSD mainline diagnostic";
+};
+
+&sdhc_2 {
+	status = "okay";
+
+	cd-gpios = <&tlmm 14 GPIO_ACTIVE_HIGH>;
+	pinctrl-names = "default", "sleep";
+	pinctrl-0 = <&sdc2_default_state &sdc2_card_detect>;
+	pinctrl-1 = <&sdc2_sleep_state &sdc2_card_detect>;
+
+	vmmc-supply = <&vreg_l9c_2p96>;
+	vqmmc-supply = <&vreg_l6c_2p96>;
+	redriver-power-gpios = <&tlmm 75 GPIO_ACTIVE_HIGH>;
+
+	bus-width = <4>;
+	max-frequency = <25000000>;
+	no-1-8-v;
+	no-sdio;
+	no-mmc;
+	disable-wp;
+};
+
+&tlmm {
+	sdc2_default_state: sdc2-default-state {
+		clk-pins {
+			pins = "sdc2_clk";
+			drive-strength = <16>;
+			bias-disable;
+		};
+
+		cmd-pins {
+			pins = "sdc2_cmd";
+			drive-strength = <16>;
+			bias-pull-up;
+		};
+
+		data-pins {
+			pins = "sdc2_data";
+			drive-strength = <16>;
+			bias-pull-up;
+		};
+	};
+
+	sdc2_card_detect: sd-card-detect-state {
+		pins = "gpio14";
+		function = "gpio";
+		bias-pull-up;
+		drive-strength = <2>;
+	};
+};

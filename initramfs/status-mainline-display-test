@@ -1,0 +1,22 @@
+#!/bin/sh
+
+if [ -s /run/tb371fc-display-test.pid ]; then
+	test_pid=$(cat /run/tb371fc-display-test.pid)
+	if kill -0 "$test_pid" 2>/dev/null; then
+		echo "KMS test PID $test_pid is still running."
+	else
+		echo "KMS test PID $test_pid has exited."
+	fi
+else
+	echo "No KMS test has been started."
+fi
+
+if [ -s /run/tb371fc-display-test.rc ]; then
+	echo "Exit status: $(cat /run/tb371fc-display-test.rc)"
+fi
+
+echo "== KMS program log =="
+cat /run/tb371fc-display-test.log 2>/dev/null || true
+echo "== current DRM/dmesg snapshot =="
+snapshot-mainline-display /run/tb371fc-display-current.txt
+

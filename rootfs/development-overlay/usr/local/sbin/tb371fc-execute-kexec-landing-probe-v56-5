@@ -1,0 +1,75 @@
+#!/bin/sh
+
+set -eu
+
+approval=${1:-}
+[ "$approval" = 'EXECUTE_TB371FC_KEXEC_LANDING_PROBE_V1' ] || {
+	echo 'Exact execution token is required.' >&2
+	exit 2
+}
+[ "$(uname -r)" = '4.19.157-perf-v56.5+' ] || {
+	echo "Unexpected source kernel: $(uname -r)" >&2
+	exit 1
+}
+
+payload_dir=/usr/local/share/tb371fc-kexec-landing-probe-v1
+probe=$payload_dir/kexec-landing-probe.bin
+dtb=$payload_dir/sm8250-lenovo-tb371fc-arch-test.dtb
+module=/usr/local/lib/tb371fc/kexec-failsafe-bootloader-watchdog-v56.5.ko
+kexec=/run/tb371fc-rescue/kexec
+
+verify() {
+	file=$1
+	expected=$2
+	[ -s "$file" ] || {
+		echo "Missing probe input: $file" >&2
+		exit 1
+	}
+	actual=$(sha256sum "$file" | awk '{print $1}')
+	[ "$actual" = "$expected" ] || {
+		echo "SHA-256 mismatch: $file" >&2
+		echo "expected $expected" >&2
+		echo "actual   $actual" >&2
+		exit 1
+	}
+}
+
+verify "$probe" 299cf9d3411ba79abdfa956e5df61b0f091a30c11975b3e88d06a50149fd2c76
+verify "$dtb" 5e7785ebbb7de0f79f7ce4f625da98aa63a8a6cb77451972497adc8dee67ce03
+verify "$module" 00d587499331fd05eb15bea0799cbd288bab25f168492dfcd43a0b809e557bd7
+[ -x "$kexec" ] || {
+	echo "kexec binary is unavailable: $kexec" >&2
+	exit 1
+}
+if grep -q '^kexec_failsafe_bootloader_watchdog ' /proc/modules; then
+	echo 'A kexec failsafe is already armed; refusing to stack timers.' >&2
+	exit 1
+fi
+
+"$kexec" -u 2>/dev/null || true
+"$kexec" -c -l "$probe" --dtb="$dtb" \
+	--append='console=tty0 ignore_loglevel'
+[ "$(cat /sys/kernel/kexec_loaded 2>/dev/null || true)" = 1 ] || {
+	echo 'Landing probe was not accepted by the kernel.' >&2
+	exit 1
+}
+
+stamp=$(date +%Y%m%d-%H%M%S 2>/dev/null || echo unknown-time)
+log=/var/log/tb371fc-kexec-landing-probe-v1-$stamp.log
+dmesg -w >"$log" 2>&1 &
+insmod "$module" \
+	authorization=ARM_VERIFIED_R7_KEXEC_FAILSAFE_TO_BOOTLOADER \
+	timeout_sec=45
+sync
+
+echo 'TB371FC kexec landing probe: expect full-screen red/blue bands for eight seconds.' \
+	>/dev/console
+"$kexec" -e
+
+echo 'kexec returned unexpectedly; waiting for the 45-second bootloader failsafe.' \
+	>&2
+while :; do
+	sync
+	sleep 1
+done
+

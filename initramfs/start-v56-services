@@ -1,0 +1,191 @@
+#!/bin/sh
+# Start the V56 WLAN and KDE stack only after the serial rescue path is alive.
+set -u
+
+bb=/run/tb371fc-rescue/busybox
+log=/var/log/tb371fc-v56-services.log
+kernel_release=$(uname -r)
+
+exec >>"$log" 2>&1
+
+screen_status() {
+	[ -c /dev/tty0 ] || return 0
+	"$bb" printf '%s\n' "$1" >/dev/tty0
+}
+
+restore_console() {
+	screen_status '[TB371FC V56] KDE stopped; restoring development console'
+	/usr/bin/chvt 1 2>/dev/null || true
+	for bind in /sys/class/vtconsole/vtcon*/bind; do
+		[ -w "$bind" ] || continue
+		echo 1 >"$bind" 2>/dev/null || true
+	done
+	"$bb" printf '\033[2J\033[H' >/dev/tty0 2>/dev/null || true
+	screen_status 'TB371FC ARCH LINUX V56 - SAFE CONSOLE'
+	screen_status 'KDE session ended. Serial SSH remains available.'
+}
+
+case "$kernel_release" in
+	4.19.157-perf-v56*) ;;
+	*)
+		echo "Refusing V56 services on unexpected kernel: $kernel_release"
+		exit 2
+		;;
+esac
+
+if [ -e /etc/tb371fc/disable-v56-kde ]; then
+	echo 'KDE disabled by /etc/tb371fc/disable-v56-kde.'
+	screen_status '[TB371FC V56] KDE disabled; console and SSH only'
+	exit 0
+fi
+
+screen_status '[TB371FC V56] Rescue SSH ready; starting WLAN'
+
+if ! grep -q '^wlan ' /proc/modules 2>/dev/null; then
+	if [ -s /run/tb371fc-rescue/wlan-v56.ko ]; then
+		/usr/bin/insmod /run/tb371fc-rescue/wlan-v56.ko || \
+			echo 'wlan.ko insertion failed; KDE startup will continue.'
+	else
+		echo 'V56 wlan.ko is missing from the preserved initramfs.'
+	fi
+fi
+
+mkdir -p /run/dbus /run/NetworkManager/conf.d
+if ! /usr/bin/pgrep -f '[d]bus-daemon.*--system' >/dev/null 2>&1; then
+	/usr/bin/dbus-uuidgen --ensure=/etc/machine-id || true
+	/usr/bin/dbus-daemon --system --fork --nopidfile || \
+		echo 'System D-Bus startup failed.'
+fi
+
+cat >/run/NetworkManager/conf.d/10-tb371fc-rescue-unmanaged.conf <<'EOF'
+[keyfile]
+unmanaged-devices=interface-name:usb0;interface-name:ttyGS0
+EOF
+
+if ! /usr/bin/pgrep -x NetworkManager >/dev/null 2>&1; then
+	/usr/bin/NetworkManager --no-daemon >>/var/log/tb371fc-networkmanager.log 2>&1 &
+	echo $! >/run/tb371fc-networkmanager.pid
+fi
+
+wlan_ready=0
+for _ in $("$bb" seq 1 45); do
+	if [ -e /sys/class/net/wlan0 ]; then
+		wlan_ready=1
+		break
+	fi
+	sleep 1
+done
+if [ "$wlan_ready" = 1 ]; then
+	screen_status '[TB371FC V56] WLAN detected; NetworkManager connecting'
+	/usr/bin/nmcli radio wifi on || true
+	for _ in $("$bb" seq 1 45); do
+		state=$(/usr/bin/nmcli -t -f DEVICE,STATE device status 2>/dev/null | \
+			grep '^wlan0:' || true)
+		case "$state" in
+			wlan0:connected) break ;;
+		esac
+		sleep 1
+	done
+	/usr/bin/nmcli -t -f DEVICE,TYPE,STATE device status || true
+	/usr/bin/ip -4 -o address show scope global || true
+else
+	echo 'wlan0 did not appear within 45 seconds.'
+	screen_status '[TB371FC V56] WLAN unavailable; continuing to KDE'
+fi
+
+for executable in /usr/bin/startplasma-wayland /usr/bin/kwin_wayland \
+	/usr/bin/dbus-run-session /usr/bin/seatd; do
+	[ -x "$executable" ] || {
+		echo "Missing KDE executable: $executable"
+		restore_console
+		exit 3
+	}
+done
+[ -c /dev/dri/card0 ] || {
+	echo 'Missing /dev/dri/card0.'
+	restore_console
+	exit 4
+}
+
+connector_ready=0
+for status in /sys/class/drm/card*-DSI-*/status; do
+	[ -r "$status" ] || continue
+	[ "$(cat "$status")" = connected ] && connector_ready=1
+done
+[ "$connector_ready" = 1 ] || {
+	echo 'No connected internal DSI connector.'
+	restore_console
+	exit 5
+}
+
+mkdir -p /run/user/0
+chmod 0700 /run/user/0
+if [ ! -S /run/seatd.sock ]; then
+	/usr/bin/seatd -u root -g video -l info \
+		>>/var/log/tb371fc-seatd.log 2>&1 &
+	echo $! >/run/tb371fc-seatd.pid
+	sleep 2
+fi
+
+screen_status '[TB371FC V56] Starting KDE Plasma Wayland (guarded)'
+(
+	export HOME=/root
+	export USER=root
+	export LOGNAME=root
+	export XDG_RUNTIME_DIR=/run/user/0
+	export XDG_SEAT=seat0
+	export XDG_SESSION_TYPE=wayland
+	export XDG_SESSION_DESKTOP=KDE
+	export XDG_CURRENT_DESKTOP=KDE
+	export LIBSEAT_BACKEND=seatd
+	export KWIN_DRM_DEVICES=/dev/dri/card0
+	export PLASMA_USE_QT_SCALING=1
+	export QT_SCALE_FACTOR=1.75
+	if [ ! -e /etc/tb371fc/enable-v56-hardware-gl ]; then
+		export LIBGL_ALWAYS_SOFTWARE=1
+	fi
+	exec /usr/bin/dbus-run-session -- /usr/bin/startplasma-wayland
+) >>/var/log/tb371fc-plasma-v56.log 2>&1 &
+plasma_pid=$!
+echo "$plasma_pid" >/run/tb371fc-plasma-v56.pid
+
+kwin_seen=0
+for _ in $("$bb" seq 1 60); do
+	if ! kill -0 "$plasma_pid" 2>/dev/null; then
+		echo 'Plasma exited during its startup window.'
+		restore_console
+		exit 6
+	fi
+	if /usr/bin/pgrep -x kwin_wayland >/dev/null 2>&1; then
+		kwin_seen=1
+		break
+	fi
+	sleep 1
+done
+[ "$kwin_seen" = 1 ] || {
+	echo 'KWin did not appear within 60 seconds.'
+	kill "$plasma_pid" 2>/dev/null || true
+	restore_console
+	exit 7
+}
+
+echo ready >/run/tb371fc-v56-kde-status
+echo 'KDE Plasma Wayland reached the guarded running state.'
+
+while kill -0 "$plasma_pid" 2>/dev/null; do
+	sleep 10
+	connector_ready=0
+	for status in /sys/class/drm/card*-DSI-*/status; do
+		[ -r "$status" ] || continue
+		[ "$(cat "$status")" = connected ] && connector_ready=1
+	done
+	if [ "$connector_ready" != 1 ]; then
+		echo 'Internal DSI connector disappeared; terminating Plasma.'
+		kill "$plasma_pid" 2>/dev/null || true
+		break
+	fi
+done
+
+echo failed >/run/tb371fc-v56-kde-status
+restore_console
+exit 8

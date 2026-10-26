@@ -1,0 +1,7 @@
+[Match]
+OriginalName=r130usb*
+
+[Link]
+NamePolicy=
+Name=r130usb0
+MACAddressPolicy=none

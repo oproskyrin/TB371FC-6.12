@@ -1,0 +1,63 @@
+#!/bin/sh
+
+set -eu
+
+payload_dir=/run/tb371fc-kexec-r7
+image=$payload_dir/Image-7.1.8-tb371fc
+dtb=$payload_dir/sm8250-lenovo-tb371fc-arch-test.dtb
+initramfs=$payload_dir/initramfs-7.1.8-r8-arch-development-graphics-capture.cpio.gz
+state=$payload_dir/state
+
+kexec=/bin/kexec
+[ -x "$kexec" ] || kexec=/run/tb371fc-rescue/kexec
+[ -x "$kexec" ] || {
+	echo 'kexec binary is unavailable' >&2
+	exit 1
+}
+
+busybox=busybox
+[ ! -x /run/tb371fc-rescue/busybox ] || \
+	busybox=/run/tb371fc-rescue/busybox
+
+verify() {
+	file=$1
+	expected=$2
+	[ -s "$file" ] || {
+		echo "missing payload: $file" >&2
+		exit 1
+	}
+	actual=$("$busybox" sha256sum "$file" | "$busybox" awk '{print $1}')
+	[ "$actual" = "$expected" ] || {
+		echo "SHA-256 mismatch: $file" >&2
+		echo "expected $expected" >&2
+		echo "actual   $actual" >&2
+		exit 1
+	}
+}
+
+[ "$(uname -r)" = '4.19.157-perf-v56.5+' ] || {
+	echo "refusing r7 handoff from unexpected kernel: $(uname -r)" >&2
+	exit 1
+}
+[ "$(cat /sys/class/block/mmcblk0p1/dev 2>/dev/null || true)" = '179:1' ] || {
+	echo 'microSD partition mmcblk0p1 is not available' >&2
+	exit 1
+}
+[ -f /etc/tb371fc-development-image ] || {
+	echo 'Arch development root marker is missing' >&2
+	exit 1
+}
+
+verify "$image" fbf98ceb6839344be9e601149473ce55178dd0330228b2c176bdba77fabbd483
+verify "$dtb" 5e7785ebbb7de0f79f7ce4f625da98aa63a8a6cb77451972497adc8dee67ce03
+verify "$initramfs" 764bb847d9970cc77fddfd1dbe26b6151127151bb60026e6cdc6ef434fae13e4
+
+cmdline='console=tty0 fbcon=font:TER16x32 ignore_loglevel log_buf_len=4M rdinit=/init root=/dev/ram0 rw fw_devlink=permissive clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=-1 swiotlb=2048'
+
+rm -f "$state"
+"$kexec" -u 2>/dev/null || true
+"$kexec" -c -l "$image" --dtb="$dtb" --initrd="$initramfs" \
+	--append="$cmdline"
+printf '%s\n' 'loaded-linux-7.1.8-r7-kernel-r8-graphics-via-v56.5' >"$state"
+sync
+echo 'Linux 7.1.8 r7 kernel with r8 graphics capture verified and loaded in RAM; it has NOT been executed.'

@@ -1,0 +1,105 @@
+diff --git a/r139_panel.c b/r139_panel.c
+--- a/r139_panel.c
++++ b/r139_panel.c
+@@ -10,3 +10,4 @@
+ #include <linux/gpio/consumer.h>
+ #include <linux/module.h>
++#include <linux/pinctrl/consumer.h>
+ #include <linux/of.h>
+@@ -1329,6 +1329,4 @@
+ static void nt36523_remove(struct mipi_dsi_device *dsi)
+ {
+-	struct panel_info *pinfo = mipi_dsi_get_drvdata(dsi);
+-
+-	drm_panel_remove(&pinfo->panel);
++	/* R139 panel removal is a devm action, including failed probe cleanup. */
+ }
+@@ -1436,1 +1436,17 @@
++/* R139 attended diagnostic only. No automatic panel hardware activation. */
++static unsigned int r139_stage;
++module_param_named(probe_stage, r139_stage, uint, 0644);
++MODULE_PARM_DESC(probe_stage, "TB371FC gate: 0=no IO,1=pins,2=vddio get,3=reset get ASIS,4=reset assert,5=DSI setup,6=attach");
++
++static void r139_checkpoint(struct device *dev, const char *text)
++{
++	dev_info(dev, "R139 stage=%u: %s\n", r139_stage, text);
++	/* Allow SSH dmesg-follow to transmit BEFORE the next hardware operation. */
++	msleep(250);
++}
++
++static void r139_panel_remove_action(void *data)
++{
++	drm_panel_remove(data);
++}
++
+ static int nt36523_probe(struct mipi_dsi_device *dsi)
+@@ -1442,5 +1458,32 @@
+ 	struct panel_info *pinfo;
+ 	const struct mipi_dsi_device_info *info;
++	struct pinctrl *pins;
++	struct pinctrl_state *state;
+ 	int i, ret;
+ 
++	/* Applied only to the fitted TB371FC Tianma panel diagnostic DT. */
++	if (!of_device_is_compatible(dev->of_node, "lenovo,tb371fc-tianma-nt36532"))
++		return -ENODEV;
++	r139_checkpoint(dev, "probe entered; before any pin selection");
++	if (r139_stage == 0)
++		return -ENODEV;
++	pins = devm_pinctrl_get(dev);
++	if (IS_ERR(pins))
++		return PTR_ERR(pins);
++	state = pinctrl_lookup_state(pins, "r139-display");
++	if (IS_ERR(state))
++		return PTR_ERR(state);
++	r139_checkpoint(dev, "before selecting GPIO33/54/77/78 display state");
++	ret = pinctrl_select_state(pins, state);
++	if (ret)
++		return ret;
++	r139_checkpoint(dev, "display pin state selected");
++	if (r139_stage == 1)
++		return -ENODEV;
++
+ 	pinfo = devm_kzalloc(dev, sizeof(*pinfo), GFP_KERNEL);
+@@ -1451,9 +1494,27 @@
++	r139_checkpoint(dev, "before vddio regulator get");
+ 	pinfo->vddio = devm_regulator_get(dev, "vddio");
+ 	if (IS_ERR(pinfo->vddio))
+ 		return dev_err_probe(dev, PTR_ERR(pinfo->vddio), "failed to get vddio regulator\n");
+ 
+-	pinfo->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++	r139_checkpoint(dev, "vddio obtained");
++	if (r139_stage == 2)
++		return -ENODEV;
++	r139_checkpoint(dev, "before resetGPIO69 request ASIS");
++	pinfo->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_ASIS);
+ 	if (IS_ERR(pinfo->reset_gpio))
+ 		return dev_err_probe(dev, PTR_ERR(pinfo->reset_gpio), "failed to get reset gpio\n");
+ 
++	r139_checkpoint(dev, "resetGPIO69 acquired without direction/value change");
++	if (r139_stage == 3)
++		return -ENODEV;
++	r139_checkpoint(dev, "before resetGPIO69 assert (logical1 physicalLOW)");
++	ret = gpiod_direction_output(pinfo->reset_gpio, 1);
++	if (ret)
++		return ret;
++	r139_checkpoint(dev, "resetGPIO69 asserted");
++	if (r139_stage == 4)
++		return -ENODEV;
++
+ 	pinfo->desc = of_device_get_match_data(dev);
+@@ -1510,1 +1571,8 @@
++	r139_checkpoint(dev, "DSI devices/backlight configured; before drm_panel_add");
++	if (r139_stage == 5)
++		return -ENODEV;
+ 	drm_panel_add(&pinfo->panel);
++	ret = devm_add_action_or_reset(dev, r139_panel_remove_action, &pinfo->panel);
++	if (ret)
++		return ret;
++	r139_checkpoint(dev, "drm_panel_add complete; before DSI attaches/native modeset");
+@@ -1518,3 +1586,5 @@
++		r139_checkpoint(dev, i ? "before secondary DSI attach" : "before primary DSI attach");
+ 		ret = devm_mipi_dsi_attach(dev, pinfo->dsi[i]);
++		r139_checkpoint(dev, i ? "after secondary DSI attach" : "after primary DSI attach");
+ 		if (ret < 0)
+ 			return dev_err_probe(dev, ret, "cannot attach to DSI%d host.\n", i);

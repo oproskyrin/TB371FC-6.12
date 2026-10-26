@@ -1,0 +1,83 @@
+diff --git a/Documentation/devicetree/bindings/mmc/sdhci-msm.yaml b/Documentation/devicetree/bindings/mmc/sdhci-msm.yaml
+--- a/Documentation/devicetree/bindings/mmc/sdhci-msm.yaml
++++ b/Documentation/devicetree/bindings/mmc/sdhci-msm.yaml
+@@ -147,6 +147,13 @@ properties:
+     $ref: /schemas/types.yaml#/definitions/uint32
+     description: platform specific settings for DLL_CONFIG reg.
+ 
++  redriver-power-gpios:
++    maxItems: 1
++    description:
++      Optional enable GPIO for an external SD signal redriver. The controller
++      asserts it before enabling the card supplies and deasserts it before
++      disabling the supplies.
++
+   iommus:
+     minItems: 1
+     maxItems: 8
+diff --git a/drivers/mmc/host/sdhci-msm.c b/drivers/mmc/host/sdhci-msm.c
+--- a/drivers/mmc/host/sdhci-msm.c
++++ b/drivers/mmc/host/sdhci-msm.c
+@@ -7,6 +7,7 @@
+ 
+ #include <linux/module.h>
+ #include <linux/delay.h>
++#include <linux/gpio/consumer.h>
+ #include <linux/mmc/mmc.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/pm_opp.h>
+@@ -282,6 +283,7 @@ struct sdhci_msm_host {
+ 	void __iomem *core_mem;	/* MSM SDCC mapped address */
+ 	int pwr_irq;		/* power irq */
+ 	struct clk *bus_clk;	/* SDHC bus voter clock */
++	struct gpio_desc *redriver_power_gpio;
+ 	struct clk *xo_clk;	/* TCXO clk needed for FLL feature of cm_dll*/
+ 	/* core, iface, cal and sleep clocks */
+ 	struct clk_bulk_data bulk_clks[4];
+@@ -1727,16 +1729,25 @@ static void sdhci_msm_handle_pwr_irq(struct sdhci_host *host, int irq)
+ 	}
+ 
+ 	if (pwr_state) {
++		bool bus_on = pwr_state & REQ_BUS_ON;
++
++		if (msm_host->redriver_power_gpio)
++			gpiod_set_value_cansleep(msm_host->redriver_power_gpio,
++						 bus_on);
++
+ 		ret = sdhci_msm_set_vmmc(msm_host, mmc,
+-					 pwr_state & REQ_BUS_ON);
++					 bus_on);
+ 		if (!ret)
+ 			ret = sdhci_msm_set_vqmmc(msm_host, mmc,
+-					pwr_state & REQ_BUS_ON);
++					bus_on);
+ 		if (!ret)
+ 			ret = sdhci_msm_set_pincfg(msm_host,
+-					pwr_state & REQ_BUS_ON);
++					bus_on);
+ 		if (!ret)
+ 			irq_ack |= CORE_PWRCTL_BUS_SUCCESS;
+-		else
++		else {
+ 			irq_ack |= CORE_PWRCTL_BUS_FAIL;
++			if (bus_on && msm_host->redriver_power_gpio)
++				gpiod_set_value_cansleep(
++					msm_host->redriver_power_gpio, 0);
++		}
+ 	}
+ 
+ 	/* Handle IO LOW/HIGH */
+@@ -2659,6 +2670,14 @@ static int sdhci_msm_probe(struct platform_device *pdev)
+ 	msm_host->mmc = host->mmc;
+ 	msm_host->pdev = pdev;
+ 
++	msm_host->redriver_power_gpio = devm_gpiod_get_optional(&pdev->dev,
++					"redriver-power", GPIOD_OUT_LOW);
++	if (IS_ERR(msm_host->redriver_power_gpio))
++		return dev_err_probe(&pdev->dev,
++				PTR_ERR(msm_host->redriver_power_gpio),
++				"failed to get redriver power GPIO\n");
++
+ 	ret = mmc_of_parse(host->mmc);
+ 	if (ret)
+ 		return ret;

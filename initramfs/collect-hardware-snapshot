@@ -1,0 +1,112 @@
+#!/bin/sh
+
+# Read-only TB371FC hardware snapshot. This script never mounts storage,
+# changes a power rail, writes a sysfs attribute or activates WLAN.
+output=${1:-/run/tb371fc-hardware-snapshot.txt}
+
+section() {
+	echo
+	echo "== $1 =="
+}
+
+dump_glob() {
+	for path in $1; do
+		[ -e "$path" ] || continue
+		echo "-- $path"
+		cat "$path" 2>/dev/null || true
+	done
+}
+
+{
+	echo "TB371FC read-only hardware snapshot"
+	echo "Date counter: $(busybox cut -d. -f1 /proc/uptime 2>/dev/null || true) seconds since boot"
+	echo "Kernel: $(uname -a)"
+
+	section "identity and memory"
+	cat /proc/cmdline 2>/dev/null || true
+	cat /proc/meminfo 2>/dev/null || true
+	grep -E '^(processor|model name|Features|CPU implementer|CPU part)' /proc/cpuinfo 2>/dev/null || true
+
+	section "storage"
+	cat /proc/partitions 2>/dev/null || true
+	for block in /sys/class/block/*; do
+		[ -e "$block" ] || continue
+		echo "-- $(basename "$block")"
+		dump_glob "$block/size $block/removable $block/device/model $block/device/vendor $block/device/state"
+	done
+
+	section "thermal and cooling"
+	for zone in /sys/class/thermal/thermal_zone*; do
+		[ -e "$zone" ] || continue
+		echo "-- $(basename "$zone")"
+		dump_glob "$zone/type $zone/temp $zone/mode"
+	done
+	for cooler in /sys/class/thermal/cooling_device*; do
+		[ -e "$cooler" ] || continue
+		echo "-- $(basename "$cooler")"
+		dump_glob "$cooler/type $cooler/cur_state $cooler/max_state"
+	done
+
+	section "power supplies"
+	for supply in /sys/class/power_supply/*; do
+		[ -e "$supply" ] || continue
+		echo "-- $(basename "$supply")"
+		dump_glob "$supply/type $supply/status $supply/online $supply/present $supply/capacity $supply/voltage_now $supply/current_now $supply/temp $supply/usb_type"
+	done
+
+	section "DRM display and backlight"
+	for connector in /sys/class/drm/card*-*; do
+		[ -e "$connector" ] || continue
+		echo "-- $(basename "$connector")"
+		dump_glob "$connector/status $connector/enabled $connector/modes $connector/dpms"
+	done
+	dump_glob "/sys/class/graphics/fb*/name /sys/class/backlight/*/brightness /sys/class/backlight/*/max_brightness"
+
+	section "USB, Type-C and DisplayPort"
+	lsusb 2>/dev/null || true
+	dump_glob "/sys/class/typec/*/data_role /sys/class/typec/*/power_role /sys/class/typec/*/power_operation_mode /sys/class/usb_role/*/role"
+	find /sys/class/typec /sys/bus/typec/devices -maxdepth 3 -type l -print 2>/dev/null || true
+
+	section "PCI, MHI, QRTR and WLAN"
+	lspci -nn 2>/dev/null || true
+	find /sys/bus/pci/devices /sys/bus/mhi/devices -maxdepth 2 -type l -print 2>/dev/null || true
+	find /sys/bus/mhi/drivers -maxdepth 2 -type l -print 2>/dev/null || true
+	ls -l /dev/wlan /dev/qrtr* /dev/socket/qrtr* 2>/dev/null || true
+	busybox pidof qrtr-ns qrtr-lookup 2>/dev/null || true
+	find /usr/lib/firmware/qca6390 -maxdepth 1 -type f -name 'bdwlan.*' -print 2>/dev/null | busybox sort
+	find /sys/kernel/debug/ipc_logging -maxdepth 2 -type f -name log -print 2>/dev/null | busybox sort
+	ip addr 2>/dev/null || true
+
+	section "Bluetooth and serial transports"
+	find /sys/class/bluetooth /sys/class/rfkill /sys/class/tty -maxdepth 2 -type l -print 2>/dev/null || true
+	ls -l /dev/ttyHS* /dev/ttyMSM* /dev/rfkill 2>/dev/null || true
+
+	section "input, touchscreen and AP500U"
+	cat /proc/bus/input/devices 2>/dev/null || true
+	input-monitor 2>/dev/null || true
+
+	section "audio"
+	cat /proc/asound/cards /proc/asound/devices 2>/dev/null || true
+	find /sys/class/sound -maxdepth 2 -type l -print 2>/dev/null || true
+
+	section "camera and media"
+	ls -l /dev/media* /dev/video* /dev/v4l-subdev* 2>/dev/null || true
+	find /sys/class/video4linux /sys/class/media -maxdepth 2 -type l -print 2>/dev/null || true
+
+	section "sensors, remote processors and firmware"
+	find /sys/bus/iio/devices /sys/class/hwmon /sys/class/remoteproc -maxdepth 3 -type f \
+		\( -name name -o -name type -o -name state -o -name firmware \) \
+		-print -exec cat {} \; 2>/dev/null || true
+
+	section "regulators and clocks"
+	cat /sys/kernel/debug/regulator/regulator_summary 2>/dev/null || true
+	cat /sys/kernel/debug/clk/clk_summary 2>/dev/null || true
+
+	section "loaded modules"
+	cat /proc/modules 2>/dev/null || true
+
+	section "selected kernel messages"
+	dmesg | grep -Ei 'error|fail|timeout|firmware|wlan|cnss|mhi|qrtr|bluetooth|hci|drm|dsi|displayport|type-c|usb|ufs|mmc|input|novatek|nvt|pen|audio|alsa|camera|camss|thermal|battery|remoteproc' || true
+} >"$output" 2>&1
+
+echo "Read-only hardware snapshot saved as $output"

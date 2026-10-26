@@ -1,0 +1,120 @@
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
+@@ -53,3 +53,4 @@
+ extern const struct msm_dsi_phy_cfg dsi_phy_10nm_8998_cfgs;
+ extern const struct msm_dsi_phy_cfg dsi_phy_7nm_cfgs;
++extern const struct msm_dsi_phy_cfg dsi_phy_7nm_tb371fc_cfgs;
+ extern const struct msm_dsi_phy_cfg dsi_phy_7nm_6375_cfgs;
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c
+@@ -577,3 +577,5 @@
+ #ifdef CONFIG_DRM_MSM_DSI_7NM_PHY
++	{ .compatible = "lenovo,tb371fc-dsi-phy-7nm",
++	  .data = &dsi_phy_7nm_tb371fc_cfgs },
+ 	{ .compatible = "qcom,dsi-phy-7nm",
+ 	  .data = &dsi_phy_7nm_cfgs },
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+@@ -49,3 +49,5 @@
+ #define DSI_PHY_7NM_QUIRK_V5_2		BIT(4)
++/* TB371FC stock 20-byte lane table: clock lane CFG0 is 0x20. */
++#define DSI_PHY_7NM_QUIRK_TB371FC_CLK_CFG0	BIT(5)
+ 
+ struct dsi_pll_config {
+@@ -870,3 +872,5 @@
+ 	for (i = 0; i < 5; i++) {
+-		writel(0x0, lane_base + REG_DSI_7nm_PHY_LN_CFG0(i));
++		writel(i == 4 && (phy->cfg->quirks &
++		       DSI_PHY_7NM_QUIRK_TB371FC_CLK_CFG0) ? 0x20 : 0x0,
++		       lane_base + REG_DSI_7nm_PHY_LN_CFG0(i));
+ 		writel(0x0, lane_base + REG_DSI_7nm_PHY_LN_CFG1(i));
+@@ -1160,1 +1164,24 @@
++/* Board-specific: working V56 v4.1 profile, do not affect generic SM8250. */
++const struct msm_dsi_phy_cfg dsi_phy_7nm_tb371fc_cfgs = {
++	.has_phy_lane = true,
++	.regulator_data = dsi_phy_7nm_36mA_regulators,
++	.num_regulators = ARRAY_SIZE(dsi_phy_7nm_36mA_regulators),
++	.ops = {
++		.enable = dsi_7nm_phy_enable,
++		.disable = dsi_7nm_phy_disable,
++		.pll_init = dsi_pll_7nm_init,
++		.save_pll_state = dsi_7nm_pll_save_state,
++		.restore_pll_state = dsi_7nm_pll_restore_state,
++		.set_continuous_clock = dsi_7nm_set_continuous_clock,
++	},
++	.min_pll_rate = 600000000UL,
++	.max_pll_rate = 5000000000ULL,
++	.io_start = { 0xae94400, 0xae96400 },
++	.num_dsi_phy = 2,
++	.quirks = DSI_PHY_7NM_QUIRK_V4_1 |
++		  DSI_PHY_7NM_QUIRK_TB371FC_CLK_CFG0,
++};
++
+ const struct msm_dsi_phy_cfg dsi_phy_7nm_cfgs = {
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.h
+@@ -841,3 +841,4 @@
+ extern const struct dpu_mdss_cfg dpu_sm7150_cfg;
+ extern const struct dpu_mdss_cfg dpu_sm8250_cfg;
++extern const struct dpu_mdss_cfg dpu_tb371fc_cfg;
+ extern const struct dpu_mdss_cfg dpu_sc7180_cfg;
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_kms.c
+@@ -1464,1 +1464,2 @@
++	{ .compatible = "lenovo,tb371fc-dpu", .data = &dpu_tb371fc_cfg, },
+ 	{ .compatible = "qcom,sm8250-dpu", .data = &dpu_sm8250_cfg, },
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_0_sm8250.h b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_0_sm8250.h
+--- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_0_sm8250.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_0_sm8250.h
+@@ -19,3 +19,16 @@
+ };
+ 
++/* Exact6.12 catalog layout; linear wide planes use its existing multirect path. */
++static const struct dpu_caps tb371fc_dpu_caps = {
++	.max_mixer_width = DEFAULT_DPU_OUTPUT_LINE_WIDTH,
++	.max_mixer_blendstages = 0xb,
++	.has_src_split = true,
++	.has_dim_layer = true,
++	.has_idle_pc = true,
++	.has_3d_merge = true,
++	.max_linewidth = 1880,
++	.pixel_ram_size = DEFAULT_PIXEL_RAM_SIZE,
++};
++
+ static const struct dpu_mdp_cfg sm8250_mdp = {
+@@ -397,1 +410,36 @@
++/* All resources match SM8250; only the board-specific caps differ. */
++const struct dpu_mdss_cfg dpu_tb371fc_cfg = {
++	.mdss_ver = &sm8250_mdss_ver,
++	.caps = &tb371fc_dpu_caps,
++	.mdp = &sm8250_mdp,
++	.cdm = &sc7280_cdm,
++	.ctl_count = ARRAY_SIZE(sm8250_ctl),
++	.ctl = sm8250_ctl,
++	.sspp_count = ARRAY_SIZE(sm8250_sspp),
++	.sspp = sm8250_sspp,
++	.mixer_count = ARRAY_SIZE(sm8250_lm),
++	.mixer = sm8250_lm,
++	.dspp_count = ARRAY_SIZE(sm8250_dspp),
++	.dspp = sm8250_dspp,
++	.dsc_count = ARRAY_SIZE(sm8250_dsc),
++	.dsc = sm8250_dsc,
++	.pingpong_count = ARRAY_SIZE(sm8250_pp),
++	.pingpong = sm8250_pp,
++	.merge_3d_count = ARRAY_SIZE(sm8250_merge_3d),
++	.merge_3d = sm8250_merge_3d,
++	.intf_count = ARRAY_SIZE(sm8250_intf),
++	.intf = sm8250_intf,
++	.vbif_count = ARRAY_SIZE(sdm845_vbif),
++	.vbif = sdm845_vbif,
++	.wb_count = ARRAY_SIZE(sm8250_wb),
++	.wb = sm8250_wb,
++	.perf = &sm8250_perf_data,
++};
++
+ #endif

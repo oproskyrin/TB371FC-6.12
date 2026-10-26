@@ -1,0 +1,22 @@
+#!/bin/sh
+# Chromium cannot use its setuid sandbox while the development Plasma session
+# still runs as root. Keep that workaround isolated, but render the browser via
+# the proven Zink/Turnip KGSL application path. KWin itself remains software.
+set -u
+
+mkdir -p /dev/shm
+mountpoint -q /dev/shm || \
+	mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /dev/shm
+chmod 1777 /dev/shm
+
+exec /usr/local/bin/tb371fc-hw-run /usr/bin/chromium \
+    --no-sandbox \
+    --ozone-platform=wayland \
+    --use-gl=angle \
+    --use-angle=vulkan \
+    --use-cmd-decoder=passthrough \
+    --enable-features=Vulkan,DefaultANGLEVulkan,VulkanFromANGLE \
+    --ignore-gpu-blocklist \
+    --disable-gpu-driver-bug-workarounds \
+    --password-store=basic \
+    "$@"

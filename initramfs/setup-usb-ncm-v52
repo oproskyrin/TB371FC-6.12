@@ -1,0 +1,64 @@
+#!/bin/sh
+
+# V52 exposes NCM as the only USB function.  V50 created ACM first and the
+# downstream gadget stack then refused the second NCM function.  The kernel
+# has CONFIG_USB_F_NCM and CONFIG_USB_CONFIGFS_NCM built in, so avoid the
+# multi-function allocation entirely and provide one deterministic IP link.
+
+modprobe libcomposite 2>/dev/null || true
+mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
+
+[ -d /sys/kernel/config/usb_gadget ] || exit 1
+
+gadget=/sys/kernel/config/usb_gadget/tb371fc_v52_ssh
+mkdir -p "$gadget"
+echo 0x1d6b >"$gadget/idVendor"
+echo 0x0105 >"$gadget/idProduct"
+
+mkdir -p "$gadget/strings/0x409" \
+	"$gadget/configs/c.1/strings/0x409"
+echo TB371FC-V52-SSH >"$gadget/strings/0x409/serialnumber"
+echo TB371FC-Linux >"$gadget/strings/0x409/manufacturer"
+echo 'TB371FC V52 USB NCM SSH' >"$gadget/strings/0x409/product"
+echo 'CDC NCM network for Arch SSH' \
+	>"$gadget/configs/c.1/strings/0x409/configuration"
+
+function_path="$gadget/functions/ncm.usb0"
+mkdir "$function_path" || exit 1
+echo 02:37:1f:c0:00:02 >"$function_path/dev_addr" || exit 1
+echo 02:37:1f:c0:00:01 >"$function_path/host_addr" || exit 1
+ln -s "$function_path" "$gadget/configs/c.1/ncm.usb0" || exit 1
+
+bound=0
+for udc_path in /sys/class/udc/*; do
+	[ -e "$udc_path" ] || continue
+	udc=${udc_path##*/}
+	if echo "$udc" >"$gadget/UDC"; then
+		bound=1
+		break
+	fi
+done
+[ "$bound" = 1 ] || exit 1
+
+for _ in $(busybox seq 1 30); do
+	if [ -r "$function_path/ifname" ]; then
+		netdev=$(busybox cat "$function_path/ifname")
+		[ -n "$netdev" ] && [ -e "/sys/class/net/$netdev" ] && break
+	fi
+	for address_path in /sys/class/net/*/address; do
+		[ -r "$address_path" ] || continue
+		if [ "$(busybox cat "$address_path")" = 02:37:1f:c0:00:02 ]; then
+			netdev=${address_path%/address}
+			netdev=${netdev##*/}
+			break 2
+		fi
+	done
+	busybox sleep 1
+done
+
+[ -n "${netdev:-}" ] || netdev=usb0
+[ -e "/sys/class/net/$netdev" ] || exit 1
+echo "$netdev" >/run/tb371fc-usb-netdev
+echo ncm >/run/tb371fc-usb-mode
+echo "USB NCM bound to $udc as $netdev"
+

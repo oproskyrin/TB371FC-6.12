@@ -1,0 +1,19 @@
+#!/bin/sh
+# Stable Plasma Shell profile for the downstream TB371FC 4.19 display stack.
+# KWin owns the vendor SDE DRM node, while selected applications may still use
+# Zink/Turnip/KGSL through a separate launcher.  Keeping Qt Quick here on its
+# software backend avoids cross-driver implicit-sync flicker in panels,
+# popups, and the virtual keyboard.
+set -u
+
+unset VK_ICD_FILENAMES VK_DRIVER_FILES
+unset MESA_LOADER_DRIVER_OVERRIDE GALLIUM_DRIVER TU_DEBUG MESA_VK_WSI_DEBUG
+unset TB371FC_ZINK_KGSL_ALLOW_UNMATCHED LIBGL_DRIVERS_PATH
+unset __EGL_VENDOR_LIBRARY_FILENAMES
+
+export LIBGL_ALWAYS_SOFTWARE=1
+export QT_QUICK_BACKEND=software
+export QSG_RHI_BACKEND=software
+export QSG_RENDER_LOOP=basic
+
+exec /usr/bin/plasmashell "$@"

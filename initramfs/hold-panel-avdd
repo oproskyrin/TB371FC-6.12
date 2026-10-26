@@ -1,0 +1,23 @@
+#!/bin/sh
+# Keep the TB371FC panel analog rail referenced before the regulator core's
+# late unused-regulator sweep. This is diagnostic and persists only for the
+# lifetime of the Linux recovery boot.
+
+module=/lib/modules/4.19.325-cip134-st18-perf+/extra/panel-avdd-hold.ko
+log=/run/tb371fc-panel-avdd-hold.log
+
+if [ ! -s "$module" ]; then
+	echo "TB371FC AVDD early hold: missing $module" | tee -a "$log" >&2
+	exit 1
+fi
+
+for attempt in 1 2 3 4 5; do
+	if insmod "$module" 2>>"$log"; then
+		echo "TB371FC AVDD early hold: active on attempt $attempt" | tee -a "$log"
+		exit 0
+	fi
+	sleep 1
+done
+
+echo 'TB371FC AVDD early hold: failed; stopping before display test' | tee -a "$log" >&2
+exit 1

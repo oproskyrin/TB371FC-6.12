@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -u
+
+output_dir=${1:-/var/log/tb371fc-hardware-report-$(date -u +%Y%m%dT%H%M%SZ)}
+mkdir -p "$output_dir"
+
+save_command() {
+    local name=$1
+    shift
+    {
+        printf '#'
+        printf ' %q' "$@"
+        printf '\n'
+        "$@"
+    } >"$output_dir/$name" 2>&1 || true
+}
+
+{
+    echo "captured_at=$(date -u --iso-8601=seconds)"
+    echo "hostname=$(hostname)"
+    echo "kernel=$(uname -a)"
+    echo "cmdline=$(cat /proc/cmdline)"
+} >"$output_dir/summary.txt"
+
+save_command dmesg.txt dmesg
+save_command journal.txt journalctl -b --no-pager
+save_command modules.txt lsmod
+save_command usb.txt lsusb -tv
+save_command pci.txt lspci -nnk
+save_command network.txt ip -details address
+save_command routes.txt ip route show table all
+save_command wifi.txt iw dev
+save_command rfkill.txt rfkill
+save_command bluetooth.txt bluetoothctl show
+save_command drm.txt drm_info
+save_command input.txt libinput list-devices
+save_command input-proc.txt cat /proc/bus/input/devices
+save_command video4linux.txt sh -c 'ls -la /dev/video* /dev/media* /sys/class/video4linux 2>&1'
+# The inner expressions are intentionally evaluated by the target shell.
+# shellcheck disable=SC2016
+save_command typec.txt sh -c 'find /sys/class/typec -maxdepth 3 -type f -print -exec sh -c '\''printf "  "; cat "$1" 2>/dev/null'\'' _ {} \;'
+# shellcheck disable=SC2016
+save_command drm-sysfs.txt sh -c 'find /sys/class/drm -maxdepth 2 -type f -print -exec sh -c '\''printf "  "; cat "$1" 2>/dev/null'\'' _ {} \;'
+
+for interface_path in /sys/class/net/*; do
+    interface=${interface_path##*/}
+    save_command "ethtool-$interface.txt" ethtool "$interface"
+done
+
+checksum_tmp=$(mktemp)
+trap 'rm -f "$checksum_tmp"' EXIT
+(
+    cd "$output_dir" || exit
+    find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 |
+        sort -z |
+        xargs -0 sha256sum
+) >"$checksum_tmp"
+mv "$checksum_tmp" "$output_dir/SHA256SUMS"
+trap - EXIT
+
+echo "Hardware report saved to $output_dir"

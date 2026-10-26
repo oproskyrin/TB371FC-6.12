@@ -1,0 +1,75 @@
+#!/bin/sh
+
+set -eu
+
+state=/run/tb371fc-linux612-r38.state
+log=/run/tb371fc-linux612-r38-before-execute.log
+kexec=/run/tb371fc-rescue/kexec
+bb=/run/tb371fc-rescue/busybox
+wdog=/sys/devices/platform/soc/17c10000.qcom,wdt/disable
+wlan_dev=b0000000.qcom,cnss-qca6390
+wlan_unbind=/sys/bus/platform/drivers/cnss2/unbind
+wlan_devdir="/sys/bus/platform/devices/$wlan_dev"
+
+[ -x "$bb" ] || bb=busybox
+[ -x "$kexec" ] || { echo 'r38: kexec is unavailable' >&2; exit 1; }
+[ "$(cat "$state" 2>/dev/null || true)" = loaded ] || {
+	echo 'r38: no verified Linux 6.12 payload is loaded' >&2
+	exit 1
+}
+[ -w "$wdog" ] || {
+	echo "r38: Qualcomm watchdog disable gate is unavailable: $wdog" >&2
+	exit 1
+}
+
+{
+	echo 'TB371FC r38 controlled handoff to Linux 6.12'
+	date 2>/dev/null || true
+	uname -a
+	cat /proc/cmdline
+	cat /sys/devices/system/cpu/online 2>/dev/null || true
+	echo "watchdog-disable-before=$(cat "$wdog" 2>/dev/null || echo unreadable)"
+	cat /run/tb371fc-linux612-r38-load.log.snapshot 2>/dev/null || true
+	"$bb" dmesg | "$bb" tail -n 300
+} >"$log" 2>&1
+
+echo 'r38: syncing storage before watchdog handoff.' >/dev/console
+sync
+
+# The QCA6390 WLAN subsystem (cnss2 driver) stays ONLINE through a plain
+# kexec transition -- confirmed via /sys/bus/msm_subsys/devices/subsys9
+# (name=wlan) reporting state=ONLINE while every other PIL subsystem
+# (adsp/cdsp/venus/spss/cvpss/slpi/a650_zap/npu/ipa_*) reports OFFLINING.
+# Its platform device is registered at physical address 0xb0000000, the
+# exact region the incoming 6.12 kernel's map_mem() hangs on when trying to
+# build a linear-map entry over it while it is still live. Hardware-tested
+# 2026-08-29: writing the device name to cnss2's unbind sysfs attribute
+# calls the driver's clean removal path (drops regulators, subsys9 is torn
+# down) with no ill effect on this USB-ACM control channel (which is
+# independent of WLAN). Best-effort: if the device is already gone or the
+# driver path is missing, do not fail the handoff over it.
+if [ -e "$wlan_devdir" ] && [ -w "$wlan_unbind" ]; then
+	echo 'r38: unbinding QCA6390 WLAN (cnss2) before kexec.' >/dev/console
+	if printf '%s' "$wlan_dev" >"$wlan_unbind" 2>>"$log"; then
+		echo 'wlan-unbind=ok' >>"$log"
+	else
+		echo 'wlan-unbind=failed (continuing anyway)' >>"$log"
+	fi
+	sleep 1
+fi
+
+# Lenovo's downstream watchdog_v2 driver has no shutdown callback.  Its
+# documented sysfs gate disables both the secure watchdog (SCM) and APSS WDT.
+# Without this, the old watchdog survives kexec and resets the tablet before
+# Linux 6.12 has reached its own timer/USB initialization.
+echo 1 >"$wdog"
+[ "$(cat "$wdog" 2>/dev/null || true)" = 1 ] || {
+	echo 'r38: watchdog disable did not latch; refusing unsafe kexec' >&2
+	exit 1
+}
+echo 'watchdog-disable-after=1' >>"$log"
+
+echo 'r38: watchdog handed off; executing verified Linux 6.12 payload now.' >/dev/console
+"$kexec" -e
+echo 'r38: kexec returned unexpectedly' >&2
+exit 1

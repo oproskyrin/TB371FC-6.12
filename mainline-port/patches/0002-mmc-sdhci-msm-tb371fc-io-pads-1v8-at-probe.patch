@@ -1,0 +1,22 @@
+--- a/drivers/mmc/host/sdhci-msm.c
++++ b/drivers/mmc/host/sdhci-msm.c
+@@ -2603,6 +2603,19 @@
+ 	writel_relaxed(CORE_VENDOR_SPEC_POR_VAL,
+ 			host->ioaddr + msm_offset->core_vendor_spec);
+ 
++	/*
++	 * TB371FC: the microSD IO rail is left at 1.8 V by the vendor kernel (SDR104) that kexecs
++	 * into this one, and there is no vqmmc regulator control here. Put the IO pads into 1.8 V
++	 * mode before the first card access; in 3.0 V mode host-driven transfers fail.
++	 */
++	if (of_property_read_bool(pdev->dev.of_node, "tb371fc,io-pads-1v8")) {
++		config = readl_relaxed(host->ioaddr + msm_offset->core_vendor_spec);
++		config |= CORE_IO_PAD_PWR_SWITCH_EN | CORE_IO_PAD_PWR_SWITCH;
++		writel_relaxed(config, host->ioaddr + msm_offset->core_vendor_spec);
++		dev_info(&pdev->dev, "TB371FC: IO pads in 1.8 V mode (vendor_spec %08x)\n",
++			 readl_relaxed(host->ioaddr + msm_offset->core_vendor_spec));
++	}
++
+ 	if (!msm_host->mci_removed) {
+ 		/* Set HC_MODE_EN bit in HC_MODE register */
+ 		msm_host_writel(msm_host, HC_MODE_EN, host,

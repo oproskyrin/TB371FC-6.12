@@ -1,0 +1,18 @@
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+@@ -1162,1 +1162,1 @@
+-/* Board-specific: retain pre-v4.1 analog/TX settings, do not affect SM8250. */
++/* Board-specific: working V56 v4.1 profile, do not affect generic SM8250. */
+@@ -1176,8 +1176,8 @@
+ 		.set_continuous_clock = dsi_7nm_set_continuous_clock,
+ 	},
+-	.min_pll_rate = 1000000000UL,
+-	.max_pll_rate = 3500000000UL,
++	.min_pll_rate = 600000000UL,
++	.max_pll_rate = 5000000000ULL,
+ 	.io_start = { 0xae94400, 0xae96400 },
+ 	.num_dsi_phy = 2,
+-	.quirks = DSI_PHY_7NM_QUIRK_PRE_V4_1 |
++	.quirks = DSI_PHY_7NM_QUIRK_V4_1 |
+ 		  DSI_PHY_7NM_QUIRK_TB371FC_CLK_CFG0,

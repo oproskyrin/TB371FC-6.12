@@ -1,0 +1,42 @@
+#!/bin/sh
+
+output=${1:-/run/tb371fc-display-snapshot.txt}
+
+{
+	echo "TB371FC Linux 7.1 display snapshot"
+	echo "Kernel: $(uname -a)"
+	echo "Uptime: $(cut -d' ' -f1 /proc/uptime 2>/dev/null || true)"
+	echo
+	echo "== command line =="
+	cat /proc/cmdline
+	echo
+	echo "== DRM class =="
+	find /sys/class/drm -maxdepth 3 -type f -print -exec cat {} \; 2>/dev/null || true
+	echo
+	echo "== DRM debug state =="
+	for file in /sys/kernel/debug/dri/0/state /sys/kernel/debug/dri/0/summary \
+		/sys/kernel/debug/dri/0/framebuffer /sys/kernel/debug/dri/0/clients; do
+		[ -r "$file" ] || continue
+		echo "-- $file"
+		cat "$file"
+	done
+	echo
+	echo "== framebuffer =="
+	find /sys/class/graphics -maxdepth 3 -type f -print -exec cat {} \; 2>/dev/null || true
+	echo
+	echo "== backlight =="
+	find /sys/class/backlight -maxdepth 3 -type f -print -exec cat {} \; 2>/dev/null || true
+	echo
+	echo "== DPU parameters =="
+	find /sys/module/msm/parameters /sys/module/drm_kms_helper/parameters \
+		-maxdepth 1 -type f -print -exec cat {} \; 2>/dev/null || true
+	echo
+	echo "== processes =="
+	ps
+	echo
+	echo "== dmesg =="
+	dmesg
+} >"$output" 2>&1
+
+cat "$output"
+

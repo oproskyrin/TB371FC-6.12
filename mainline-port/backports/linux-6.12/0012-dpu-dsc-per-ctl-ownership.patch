@@ -1,0 +1,57 @@
+drm/msm/dpu: give each CTL its own DSC on bonded DSI without DSC merge
+
+With bonded DSI + 2 DSC + 2 INTF (no DSC merge) the topology reserves two
+CTLs (0010 patch). 6.12 still programs:
+  - CTL_DSC_ACTIVE of BOTH CTLs with the full dsc_mask (DSC_0|DSC_1);
+  - the DSC flush bits of both DSC blocks only on the master CTL.
+On TB371FC the master half (DSI0) shows the correct modetest pattern and the
+slave half (DSI1) shows garbage.
+
+Downstream SDE (2 LM / 2 ENC / 2 INTF) makes each CTL own and flush the DSC
+of its own pingpong. Do the same: DSC i belongs to physical encoder i (it
+is bound to hw_pp[i], which is phys_encs[i]->hw_pp), so
+  - dpu_encoder_helper_get_dsc() returns only that DSC bit when the encoder
+    has more than one physical encoder and no DSC merge;
+  - dpu_encoder_prep_dsc() flushes DSC i through phys_encs[i]->hw_ctl.
+Single-interface (and DSC merge) behaviour is unchanged.
+
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+@@ -1926,9 +1926,19 @@ static void dpu_encoder_prep_dsc(struct dpu_encoder_virt *dpu_enc,
+ 	enc_ip_w = intf_ip_w / 2;
+ 	initial_lines = dpu_encoder_dsc_initial_line_calc(dsc, enc_ip_w);
+
+-	for (i = 0; i < MAX_CHANNELS_PER_ENC; i++)
+-		dpu_encoder_dsc_pipe_cfg(ctl, hw_dsc[i], hw_pp[i],
++	for (i = 0; i < MAX_CHANNELS_PER_ENC; i++) {
++		struct dpu_hw_ctl *dsc_ctl = ctl;
++
++		/* bonded DSI without DSC merge: each CTL flushes its own DSC */
++		if (dpu_enc->num_phys_encs > 1 &&
++		    !dpu_encoder_use_dsc_merge(enc_master->parent) &&
++		    i < dpu_enc->num_phys_encs && dpu_enc->phys_encs[i] &&
++		    dpu_enc->phys_encs[i]->hw_ctl)
++			dsc_ctl = dpu_enc->phys_encs[i]->hw_ctl;
++
++		dpu_encoder_dsc_pipe_cfg(dsc_ctl, hw_dsc[i], hw_pp[i],
+ 					 dsc, dsc_common_mode, initial_lines);
++	}
+ }
+
+ /**
+@@ -2620,6 +2630,16 @@ unsigned int dpu_encoder_helper_get_dsc(struct dpu_encoder_phys *phys_enc)
+ {
+ 	struct drm_encoder *encoder = phys_enc->parent;
+ 	struct dpu_encoder_virt *dpu_enc = to_dpu_encoder_virt(encoder);
++	int i;
++
++	/* bonded DSI without DSC merge: each CTL owns only its own DSC */
++	if (dpu_enc->num_phys_encs > 1 && !dpu_encoder_use_dsc_merge(encoder)) {
++		for (i = 0; i < dpu_enc->num_phys_encs && i < MAX_CHANNELS_PER_ENC; i++)
++			if (dpu_enc->phys_encs[i] == phys_enc)
++				return dpu_enc->hw_dsc[i] ?
++					BIT(dpu_enc->hw_dsc[i]->idx - DSC_0) : 0;
++	}
+
+ 	return dpu_enc->dsc_mask;
+ }

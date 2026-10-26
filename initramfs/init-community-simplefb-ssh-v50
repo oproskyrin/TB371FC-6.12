@@ -1,0 +1,101 @@
+#!/bin/sh
+
+# TB371FC V50: inherited simplefb proof plus a persistent USB rescue/SSH path.
+# Android/UFS filesystems are never mounted.  The only persistent mount is the
+# explicitly authorised Arch development container on microSD.
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+busybox mkdir -p /proc /sys /run /tmp /dev/pts /sys/kernel/debug
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+
+[ -c /dev/console ] || busybox mknod -m 600 /dev/console c 5 1
+[ -c /dev/null ] || busybox mknod -m 666 /dev/null c 1 3
+[ -c /dev/zero ] || busybox mknod -m 666 /dev/zero c 1 5
+[ -c /dev/tty ] || busybox mknod -m 666 /dev/tty c 5 0
+
+hostname tb371fc-community-v50
+dmesg -n 8
+busybox mkdir -p /run/tb371fc-v50 /run/tb371fc-rescue
+echo starting >/run/tb371fc-v50/status
+
+start_usb_rescue() {
+	/bin/setup-usb-console >/run/tb371fc-v50/setup-usb-console.txt 2>&1 || \
+		return 1
+	for _ in $(busybox seq 1 60); do
+		[ -e /sys/class/net/usb0 ] && break
+		busybox sleep 1
+	done
+	[ -e /sys/class/net/usb0 ] || return 1
+	busybox ip link set usb0 up
+	busybox ip addr add 169.254.77.2/16 dev usb0 2>/dev/null || \
+		busybox ifconfig usb0 169.254.77.2 netmask 255.255.0.0 up
+	busybox cp /bin/busybox /run/tb371fc-rescue/busybox
+	busybox ln -sf busybox /run/tb371fc-rescue/sh
+	( exec busybox nc -lk -p 2323 -e /run/tb371fc-rescue/sh ) &
+	echo $! >/run/tb371fc-rescue-shell.pid
+	(
+		while :; do
+			busybox ip addr add 169.254.77.2/16 dev usb0 2>/dev/null || true
+			busybox ip link set usb0 up 2>/dev/null || true
+			busybox sleep 2
+		done
+	) &
+	echo $! >/run/tb371fc-network-watchdog.pid
+	echo rescue-ready-169.254.77.2-2323 >/run/tb371fc-v50/usb-status
+}
+
+start_usb_rescue || echo rescue-failed >/run/tb371fc-v50/usb-status
+
+for _ in $(busybox seq 1 30); do
+	[ -r /sys/class/graphics/fb0/dev ] && break
+	busybox sleep 1
+done
+
+if [ -r /sys/class/graphics/fb0/dev ] && [ ! -c /dev/fb0 ]; then
+	devnum=$(busybox cat /sys/class/graphics/fb0/dev)
+	major=${devnum%%:*}
+	minor=${devnum##*:}
+	busybox mknod -m 660 /dev/fb0 c "$major" "$minor"
+fi
+
+busybox cat /proc/fb >/run/tb371fc-v50/proc-fb-before.txt 2>&1
+busybox dmesg >/run/tb371fc-v50/dmesg-before-pattern.txt 2>&1
+
+if [ -c /dev/fb0 ]; then
+	/bin/framebuffer-pattern /dev/fb0 \
+		>/run/tb371fc-v50/framebuffer-pattern.txt 2>&1
+	echo $? >/run/tb371fc-v50/framebuffer-pattern.exit
+	echo pattern-visible-five-seconds >/run/tb371fc-v50/status
+else
+	echo 1 >/run/tb371fc-v50/framebuffer-pattern.exit
+	echo simplefb-missing >/run/tb371fc-v50/status
+fi
+
+busybox sleep 5
+dmesg -n 1
+if [ -c /dev/tty0 ]; then
+	busybox printf '\033[2J\033[H' >/dev/tty0
+	busybox printf 'TB371FC ARCH LINUX V50\n\n' >/dev/tty0
+	busybox printf 'Parallel SSPP: enabled\n' >/dev/tty0
+	busybox printf 'Simple framebuffer: active\n' >/dev/tty0
+	busybox printf 'USB rescue: 169.254.77.2:2323\n' >/dev/tty0
+	busybox printf 'Starting Arch SSH: port 2222\n\n' >/dev/tty0
+	busybox printf 'No userspace DRM modeset.\n' >/dev/tty0
+fi
+
+busybox sleep 10
+busybox cat /proc/fb >/run/tb371fc-v50/proc-fb-visible.txt 2>&1
+busybox dmesg >/run/tb371fc-v50/dmesg-visible.txt 2>&1
+echo entering-arch-development-root >/run/tb371fc-v50/status
+
+# The inherited V23 handoff verifies the exact 6 GiB image and marker before
+# mounting it.  Its runtime starts key-only OpenSSH.  drm-kms-smoketest is
+# deliberately absent from this initramfs, so the runtime cannot modeset DRM.
+exec /bin/boot-arch-development-rootfs

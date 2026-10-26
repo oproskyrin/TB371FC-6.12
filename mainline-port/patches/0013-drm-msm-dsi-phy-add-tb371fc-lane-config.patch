@@ -1,0 +1,105 @@
+From: TB371FC Linux Project <tb371fc-linux@localhost>
+Subject: [PATCH] drm/msm/dsi: reproduce TB371FC vendor lane configuration
+
+Lenovo's vendor DT supplies a 20-byte platform-lane-config to both DSI
+PHYs.  Compared with the generic SM8250 7nm PHY setup, the tablet needs
+the v4.0 TX_DCTRL values and writes 0x20 to CFG0 of the clock lane.
+
+Give the board a dedicated compatible and configuration so this electrical
+setting does not affect other SM8250 devices.
+
+---
+ Documentation/devicetree/bindings/phy/qcom,dsi-phy-7nm.yaml | 1 +
+ drivers/gpu/drm/msm/dsi/phy/dsi_phy.c                        | 2 ++
+ drivers/gpu/drm/msm/dsi/phy/dsi_phy.h                        | 1 +
+ drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c                    | 5 ++++-
+ 4 files changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/Documentation/devicetree/bindings/phy/qcom,dsi-phy-7nm.yaml b/Documentation/devicetree/bindings/phy/qcom,dsi-phy-7nm.yaml
+index 000000000000..111111111111 100644
+--- a/Documentation/devicetree/bindings/phy/qcom,dsi-phy-7nm.yaml
++++ b/Documentation/devicetree/bindings/phy/qcom,dsi-phy-7nm.yaml
+@@ -17,6 +17,7 @@ properties:
+     oneOf:
+       - items:
+           - enum:
++              - lenovo,tb371fc-dsi-phy-7nm
+               - qcom,dsi-phy-7nm
+               - qcom,dsi-phy-7nm-8150
+               - qcom,kaanapali-dsi-phy-3nm
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c
+index 000000000000..111111111111 100644
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.c
+@@ -555,6 +555,8 @@ static const struct of_device_id dsi_phy_dt_match[] = {
+ 	  .data = &dsi_phy_10nm_8998_cfgs },
+ #endif
+ #ifdef CONFIG_DRM_MSM_DSI_7NM_PHY
++	{ .compatible = "lenovo,tb371fc-dsi-phy-7nm",
++	  .data = &dsi_phy_7nm_tb371fc_cfgs },
+ 	{ .compatible = "qcom,dsi-phy-7nm",
+ 	  .data = &dsi_phy_7nm_cfgs },
+ 	{ .compatible = "qcom,dsi-phy-7nm-8150",
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
+index 000000000000..111111111111 100644
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy.h
+@@ -54,6 +54,7 @@ extern const struct msm_dsi_phy_cfg dsi_phy_10nm_cfgs;
+ extern const struct msm_dsi_phy_cfg dsi_phy_10nm_8998_cfgs;
+ extern const struct msm_dsi_phy_cfg dsi_phy_7nm_cfgs;
++extern const struct msm_dsi_phy_cfg dsi_phy_7nm_tb371fc_cfgs;
+ extern const struct msm_dsi_phy_cfg dsi_phy_7nm_6375_cfgs;
+ extern const struct msm_dsi_phy_cfg dsi_phy_7nm_8150_cfgs;
+ extern const struct msm_dsi_phy_cfg dsi_phy_7nm_7280_cfgs;
+diff --git a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+index 000000000000..111111111111 100644
+--- a/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
++++ b/drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c
+@@ -52,6 +52,8 @@
+ #define DSI_PHY_7NM_QUIRK_V5_2		BIT(4)
+ /* Hardware is V7.2 */
+ #define DSI_PHY_7NM_QUIRK_V7_2		BIT(5)
++/* Lenovo TB371FC vendor lane config uses CFG0=0x20 on the clock lane. */
++#define DSI_PHY_7NM_QUIRK_TB371FC_CLK_CFG0	BIT(6)
+ 
+ struct dsi_pll_config {
+ 	bool enable_ssc;
+@@ -943,7 +945,8 @@ static void dsi_phy_hw_v4_0_lane_settings(struct msm_dsi_phy *phy)
+ 
+ 	/* other settings */
+ 	for (i = 0; i < 5; i++) {
+-		writel(0x0, lane_base + REG_DSI_7nm_PHY_LN_CFG0(i));
++		writel(i == 4 && (phy->cfg->quirks & DSI_PHY_7NM_QUIRK_TB371FC_CLK_CFG0) ? 0x20 : 0x0,
++		       lane_base + REG_DSI_7nm_PHY_LN_CFG0(i));
+ 		writel(0x0, lane_base + REG_DSI_7nm_PHY_LN_CFG1(i));
+ 		writel(i == 4 ? 0x8a : 0xa, lane_base + REG_DSI_7nm_PHY_LN_CFG2(i));
+ 		writel(tx_dctrl[i], lane_base + REG_DSI_7nm_PHY_LN_TX_DCTRL(i));
+@@ -1322,6 +1325,26 @@ const struct msm_dsi_phy_cfg dsi_phy_7nm_8150_cfgs = {
+ 	.quirks = DSI_PHY_7NM_QUIRK_V4_0,
+ };
+ 
++const struct msm_dsi_phy_cfg dsi_phy_7nm_tb371fc_cfgs = {
++	.has_phy_lane = true,
++	.regulator_data = dsi_phy_7nm_36mA_regulators,
++	.num_regulators = ARRAY_SIZE(dsi_phy_7nm_36mA_regulators),
++	.ops = {
++		.enable = dsi_7nm_phy_enable,
++		.disable = dsi_7nm_phy_disable,
++		.pll_init = dsi_pll_7nm_init,
++		.save_pll_state = dsi_7nm_pll_save_state,
++		.restore_pll_state = dsi_7nm_pll_restore_state,
++		.set_continuous_clock = dsi_7nm_set_continuous_clock,
++	},
++	.min_pll_rate = 1000000000UL,
++	.max_pll_rate = 3500000000UL,
++	.io_start = { 0xae94400, 0xae96400 },
++	.num_dsi_phy = 2,
++	.quirks = DSI_PHY_7NM_QUIRK_V4_0 |
++		  DSI_PHY_7NM_QUIRK_TB371FC_CLK_CFG0,
++};
++
+ const struct msm_dsi_phy_cfg dsi_phy_7nm_7280_cfgs = {
+ 	.has_phy_lane = true,
+ 	.regulator_data = dsi_phy_7nm_37750uA_regulators,
+-- 
+2.51.0

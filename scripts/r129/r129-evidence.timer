@@ -1,0 +1,9 @@
+[Unit]
+Description=Print TB371FC boot evidence after startup
+
+[Timer]
+OnActiveSec=20s
+Unit=r129-evidence.service
+
+[Install]
+WantedBy=timers.target

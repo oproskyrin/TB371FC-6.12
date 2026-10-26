@@ -1,0 +1,31 @@
+[Unit]
+Description=TB371FC KDE Plasma (software rendering) on tty7
+After=systemd-logind.service r149-touch.service
+Wants=systemd-logind.service
+
+[Service]
+Type=simple
+User=alarm
+PAMName=login
+WorkingDirectory=/home/alarm
+TTYPath=/dev/tty7
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+TTYReset=yes
+TTYVHangup=yes
+UtmpIdentifier=tty7
+UtmpMode=user
+Environment=XDG_SESSION_TYPE=wayland
+Environment=XDG_SESSION_DESKTOP=KDE
+Environment=XDG_CURRENT_DESKTOP=KDE
+Environment=XDG_SEAT=seat0
+Environment=XDG_VTNR=7
+Environment=KWIN_DRM_DEVICES=/dev/dri/card0
+Environment=KWIN_COMPOSE=Q
+Environment=LIBGL_ALWAYS_SOFTWARE=1
+Environment=QT_QUICK_BACKEND=software
+ExecStartPre=+/usr/bin/chvt 7
+ExecStart=/usr/bin/dbus-run-session /usr/bin/startplasma-wayland
+TimeoutStopSec=15s
+Restart=no

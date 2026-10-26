@@ -1,0 +1,31 @@
+#!/bin/sh
+
+set -eu
+
+state=/run/tb371fc-linux612-r37.state
+log=/run/tb371fc-linux612-r37-before-execute.log
+kexec=/run/tb371fc-rescue/kexec
+bb=/run/tb371fc-rescue/busybox
+
+[ -x "$bb" ] || bb=busybox
+[ -x "$kexec" ] || { echo 'r37: kexec is unavailable' >&2; exit 1; }
+[ "$(cat "$state" 2>/dev/null || true)" = loaded ] || {
+	echo 'r37: no verified Linux 6.12 payload is loaded' >&2
+	exit 1
+}
+
+{
+	echo 'TB371FC r37 controlled handoff to Linux 6.12'
+	date 2>/dev/null || true
+	uname -a
+	cat /proc/cmdline
+	cat /sys/devices/system/cpu/online 2>/dev/null || true
+	cat /run/tb371fc-linux612-r37-load.log.snapshot 2>/dev/null || true
+	"$bb" dmesg | "$bb" tail -n 300
+} >"$log" 2>&1
+
+echo 'r37: executing verified Linux 6.12 payload now.' >/dev/console
+sync
+"$kexec" -e
+echo 'r37: kexec returned unexpectedly' >&2
+exit 1

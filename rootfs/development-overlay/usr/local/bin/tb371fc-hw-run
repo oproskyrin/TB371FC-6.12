@@ -1,0 +1,45 @@
+#!/bin/sh
+# Run an individual Wayland application on Adreno 650 while the downstream
+# SDE display compositor remains on its stable software renderer.
+set -u
+
+icd=/opt/tb371fc-gpu-turnip-wayland/share/vulkan/icd.d/freedreno_icd.aarch64.json
+mesa=/opt/tb371fc-gpu-zink
+turnip=/opt/tb371fc-gpu-turnip-wayland
+[ -r "$icd" ] || {
+	echo "TB371FC Turnip ICD is missing: $icd" >&2
+	exit 127
+}
+[ -c /dev/kgsl-3d0 ] || {
+	echo 'TB371FC Adreno KGSL device is missing: /dev/kgsl-3d0' >&2
+	exit 126
+}
+[ -r "$mesa/lib/libgallium-26.1.7.so" ] || {
+	echo "TB371FC patched Zink Mesa is missing: $mesa" >&2
+	exit 125
+}
+[ -r "$turnip/lib/libvulkan_freedreno.so" ] || {
+	echo "TB371FC patched Turnip is missing: $turnip" >&2
+	exit 124
+}
+[ "$#" -gt 0 ] || {
+	echo "usage: ${0##*/} command [arguments...]" >&2
+	exit 2
+}
+
+unset LIBGL_ALWAYS_SOFTWARE
+export TB371FC_ZINK_KGSL_ALLOW_UNMATCHED=1
+export LIBGL_DRIVERS_PATH="$mesa/lib/dri"
+export LD_LIBRARY_PATH="$mesa/lib:$turnip/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export __EGL_VENDOR_LIBRARY_FILENAMES="$mesa/share/glvnd/egl_vendor.d/50_mesa.json"
+export MESA_LOADER_DRIVER_OVERRIDE=zink
+export GALLIUM_DRIVER=zink
+export VK_ICD_FILENAMES="$icd"
+export VK_DRIVER_FILES="$icd"
+export TU_DEBUG=noconform
+# KGSL rendering and the downstream SDE KMS node are separate devices on the
+# vendor kernel. This Turnip build forces wl_shm presentation while all
+# application GL rendering remains on Turnip/Adreno.
+unset MESA_VK_WSI_DEBUG
+
+exec "$@"

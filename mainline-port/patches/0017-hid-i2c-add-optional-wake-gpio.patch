@@ -1,0 +1,98 @@
+From: TB371FC Linux port <tb371fc-linux@localhost>
+Date: Fri, 14 Aug 2026 22:00:00 +0500
+Subject: [PATCH] HID: i2c-hid: add optional wake GPIO sequencing
+
+Some detachable I2C-HID keyboard controllers expose a dedicated wake input
+in addition to reset.  The Lenovo TB371FC keyboard cover must have its wake
+line asserted before reset is deasserted; otherwise address 0x60 does not
+answer.
+
+Teach i2c-hid-of about an optional wake-gpios property and document the reset
+and post-reset properties that the driver already consumes.  Devices without
+the new property are unchanged.
+
+Signed-off-by: TB371FC Linux port <tb371fc-linux@localhost>
+---
+ .../devicetree/bindings/input/hid-over-i2c.yaml    | 18 ++++++++++++++++++
+ drivers/hid/i2c-hid/i2c-hid-of.c                  | 11 +++++++++++
+ 2 files changed, 29 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/input/hid-over-i2c.yaml b/Documentation/devicetree/bindings/input/hid-over-i2c.yaml
+index 24086c864..3ce88ef9d 100644
+--- a/Documentation/devicetree/bindings/input/hid-over-i2c.yaml
++++ b/Documentation/devicetree/bindings/input/hid-over-i2c.yaml
+@@ -47,6 +47,18 @@ properties:
+     description: Time required by the device after enabling its regulators
+       or powering it on, before it is ready for communication.
+ 
++  post-reset-deassert-delay-ms:
++    description: Time required by the device after deasserting reset, before
++      it is ready for communication.
++
++  reset-gpios:
++    maxItems: 1
++    description: Active reset line for the HID controller.
++
++  wake-gpios:
++    maxItems: 1
++    description: Optional line asserted while the HID controller must be
++      awake and able to communicate.
++
+   touchscreen-inverted-x: true
+ 
+   touchscreen-inverted-y: true
+@@ -71,6 +83,11 @@ examples:
+         #address-cells = <1>;
+         #size-cells = <0>;
+ 
++        /*
++         * Simple devices need only the mandatory properties.  Controllers
++         * with reset or wake pins may use the optional sequencing properties.
++         */
++
+         hid@2c {
+             compatible = "hid-over-i2c";
+             reg = <0x2c>;
+diff --git a/drivers/hid/i2c-hid/i2c-hid-of.c b/drivers/hid/i2c-hid/i2c-hid-of.c
+index 7f26b615f..f2298f861 100644
+--- a/drivers/hid/i2c-hid/i2c-hid-of.c
++++ b/drivers/hid/i2c-hid/i2c-hid-of.c
+@@ -36,6 +36,7 @@ struct i2c_hid_of {
+ 
+ 	struct i2c_client *client;
+ 	struct gpio_desc *reset_gpio;
++	struct gpio_desc *wake_gpio;
+ 	struct regulator_bulk_data supplies[2];
+ 	int post_power_delay_ms;
+ 	int post_reset_delay_ms;
+@@ -57,6 +58,7 @@ static int i2c_hid_of_power_up(struct i2chid_ops *ops)
+ 	if (ihid_of->post_power_delay_ms)
+ 		msleep(ihid_of->post_power_delay_ms);
+ 
++	gpiod_set_value_cansleep(ihid_of->wake_gpio, 1);
+ 	gpiod_set_value_cansleep(ihid_of->reset_gpio, 0);
+ 	if (ihid_of->post_reset_delay_ms)
+ 		msleep(ihid_of->post_reset_delay_ms);
+@@ -69,6 +71,7 @@ static void i2c_hid_of_power_down(struct i2chid_ops *ops)
+ 	struct i2c_hid_of *ihid_of = container_of(ops, struct i2c_hid_of, ops);
+ 
+ 	gpiod_set_value_cansleep(ihid_of->reset_gpio, 1);
++	gpiod_set_value_cansleep(ihid_of->wake_gpio, 0);
+ 	regulator_bulk_disable(ARRAY_SIZE(ihid_of->supplies),
+ 			       ihid_of->supplies);
+ }
+@@ -121,6 +124,14 @@ static int i2c_hid_of_probe(struct i2c_client *client)
+ 	if (IS_ERR(ihid_of->reset_gpio))
+ 		return PTR_ERR(ihid_of->reset_gpio);
+ 
++	/*
++	 * Keep an optional wake line inactive until power_up().  This is separate
++	 * from an IRQ wake source: it controls the HID controller's MCU state.
++	 */
++	ihid_of->wake_gpio = devm_gpiod_get_optional(dev, "wake", GPIOD_OUT_LOW);
++	if (IS_ERR(ihid_of->wake_gpio))
++		return PTR_ERR(ihid_of->wake_gpio);
++
+ 	ihid_of->supplies[0].supply = "vdd";
+ 	ihid_of->supplies[1].supply = "vddl";
+ 	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(ihid_of->supplies),

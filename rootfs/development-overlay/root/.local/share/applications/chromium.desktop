@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Chromium
+Comment=Web browser (TB371FC stable profile)
+Exec=/usr/local/bin/tb371fc-chromium %U
+Icon=chromium
+Terminal=false
+Categories=Network;WebBrowser;
+StartupNotify=true
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;

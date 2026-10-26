@@ -1,0 +1,96 @@
+From: TB371FC Linux bring-up <tb371fc@example.invalid>
+Subject: [PATCH] arm64: tb371fc: trace the primary MMU switch
+
+Keep the stock continuous-splash framebuffer identity mapped while the
+diagnostic marker option is enabled. Repaint the final r10 band at six
+milestones around __enable_mmu, early kernel mapping and the branch to the
+virtual __primary_switched path. This is bring-up instrumentation only.
+---
+ arch/arm64/kernel/head.S         | 28 ++++++++++++++++++++++++++++
+ arch/arm64/kernel/pi/map_range.c |  6 ++++++
+ 2 files changed, 34 insertions(+)
+
+diff --git a/arch/arm64/kernel/pi/map_range.c b/arch/arm64/kernel/pi/map_range.c
+--- a/arch/arm64/kernel/pi/map_range.c
++++ b/arch/arm64/kernel/pi/map_range.c
+@@ -104,6 +104,12 @@ asmlinkage phys_addr_t __init create_init_idmap(pgd_t *pg_dir, ptdesc_t clrmask)
+ 	map_range(&ptep, (u64)__initdata_begin, (u64)_end,
+ 		  (phys_addr_t)__initdata_begin, data_prot, IDMAP_ROOT_LEVEL,
+ 		  (pte_t *)pg_dir, false, 0);
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Preserve the 2944x1840 stock splash buffer across MMU enable. */
++	map_range(&ptep, 0x9c000000ULL, 0x9d600000ULL,
++		  0x9c000000ULL, data_prot, IDMAP_ROOT_LEVEL,
++		  (pte_t *)pg_dir, false, 0);
++#endif
+ 
+ 	return ptep;
+ }
+diff --git a/arch/arm64/kernel/head.S b/arch/arm64/kernel/head.S
+--- a/arch/arm64/kernel/head.S
++++ b/arch/arm64/kernel/head.S
+@@ -267,6 +267,11 @@ SYM_CODE_END(preserve_boot_args)
+  *   x0 = __pa(KERNEL_START)
+  */
+ SYM_FUNC_START_LOCAL(__primary_switched)
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 11: the virtual __primary_switched target was entered (lime). */
++	tb371fc_early_fb_band 0x9d14, 0x0000, 0xff80, 0xff00
++#endif
++
+ 	adr_l	x4, init_task
+ 	init_cpu_task x4, x5, x6
+ 
+@@ -285,6 +290,11 @@ SYM_FUNC_START_LOCAL(__primary_switched)
+ 
+ 	mov	x0, x20
+ 	bl	set_cpu_boot_mode_flag
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 12: boot mode state was committed (azure). */
++	tb371fc_early_fb_band 0x9d14, 0x0000, 0xff00, 0x80ff
++#endif
++
+ 
+ #if defined(CONFIG_KASAN_GENERIC) || defined(CONFIG_KASAN_SW_TAGS)
+ 	bl	kasan_early_init
+@@ -291,6 +301,11 @@ SYM_FUNC_START_LOCAL(__primary_switched)
+ #endif
+ 	mov	x0, x20
+ 	bl	finalise_el2			// Prefer VHE if possible
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 13: EL2 finalization returned (pink). */
++	tb371fc_early_fb_band 0x9d14, 0x0000, 0xffff, 0x80c0
++#endif
++
+ 	ldp	x29, x30, [sp], #16
+ 	bl	start_kernel
+ 	ASM_BUG()
+@@ -558,13 +573,26 @@ SYM_FUNC_START_LOCAL(__primary_switch)
+ 	adrp	x1, reserved_pg_dir
+ 	adrp	x2, __pi_init_idmap_pg_dir
+ 	bl	__enable_mmu
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 8: __enable_mmu returned through the identity map (orange). */
++	tb371fc_early_fb_band 0x9d14, 0x0000, 0xffff, 0x8000
++#endif
+ 
+ 	adrp	x1, early_init_stack
+ 	mov	sp, x1
+ 	mov	x29, xzr
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 9: the post-MMU stack is usable (purple). */
++	tb371fc_early_fb_band 0x9d14, 0x0000, 0xff80, 0x00ff
++#endif
++
+ 	mov	x0, x20				// pass the full boot status
+ 	mov	x1, x21				// pass the FDT
+ 	bl	__pi_early_map_kernel		// Map and relocate the kernel
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Stage 10: final kernel mappings and relocation completed (gray). */
++	tb371fc_early_fb_band 0x9d14, 0x0000, 0xff80, 0x8080
++#endif
+ 
+ 	ldr	x8, =__primary_switched
+ 	adrp	x0, KERNEL_START		// __pa(KERNEL_START)
+-- 
+2.45.2

@@ -1,0 +1,154 @@
+#!/bin/sh
+
+image_name=tb371fc-linux/tb371fc-arch-development.raw
+sd_mount=/mnt/sd
+new_root=/newroot
+
+rescue() {
+	echo "Arch development handoff failed: $1" >&2
+	echo 'Android partitions were not mounted.' >&2
+	echo 'USB NCM rescue shell remains on 169.254.77.2:2323.' >&2
+	exec setsid cttyhack sh
+}
+
+for _ in $(seq 1 30); do
+	[ -e /sys/class/block/mmcblk0p1/dev ] && break
+	sleep 1
+done
+[ -e /sys/class/block/mmcblk0p1/dev ] || \
+	rescue 'microSD partition mmcblk0p1 was not found in sysfs'
+grep -qx '179:1' /sys/class/block/mmcblk0p1/dev || \
+	rescue 'unexpected mmcblk0p1 device number'
+[ -b /dev/mmcblk0p1 ] || busybox mknod -m 600 /dev/mmcblk0p1 b 179 1
+
+[ -e /sys/class/block/loop0/dev ] || rescue 'loop0 was not found in sysfs'
+grep -qx '7:0' /sys/class/block/loop0/dev || \
+	rescue 'unexpected loop0 device number'
+[ -b /dev/loop0 ] || busybox mknod -m 600 /dev/loop0 b 7 0
+
+mkdir -p "$sd_mount" "$new_root"
+mount -t exfat -o rw,noatime /dev/mmcblk0p1 "$sd_mount" || \
+	rescue 'microSD exFAT mount failed'
+image="$sd_mount/$image_name"
+[ -f "$image" ] || rescue "development image is missing: $image_name"
+image_size=$(stat -c %s "$image" 2>/dev/null || true)
+gib=1073741824
+case "$image_size" in
+	''|*[!0-9]*) rescue 'development image size is invalid' ;;
+esac
+[ "$image_size" -ge $((6 * gib)) ] && \
+	[ "$image_size" -le $((64 * gib)) ] && \
+	[ $((image_size % gib)) -eq 0 ] || \
+	rescue 'development image must be a whole-GiB ext4 image between 6 and 64 GiB'
+
+losetup /dev/loop0 "$image" || rescue 'loop0 setup failed'
+mount -t ext4 -o rw,noatime,commit=30 /dev/loop0 "$new_root" || \
+	rescue 'development ext4 mount failed'
+[ -f "$new_root/etc/tb371fc-development-image" ] || \
+	rescue 'development image marker is missing'
+[ -x "$new_root/usr/local/sbin/tb371fc-development-init" ] || \
+	rescue 'development init is missing'
+handoff_log="$new_root/var/log/tb371fc-handoff.log"
+mkdir -p "$new_root/var/log"
+echo "=== development handoff $(date 2>/dev/null || true) ===" >>"$handoff_log"
+echo 'ext4-mounted marker-verified' >>"$handoff_log"
+echo '[TB371FC Linux] Arch root verified; preparing switch_root'
+
+mkdir -p "$new_root/run" "$new_root/dev" "$new_root/proc" \
+	"$new_root/sys" "$new_root/tmp"
+mkdir -p /run/tb371fc-rescue
+cp /bin/return-to-bootloader /run/tb371fc-rescue/return-to-bootloader || \
+	rescue 'cannot preserve return-to-bootloader helper'
+cp /bin/tb371fc-development-init-runtime /run/tb371fc-rescue/development-init || \
+	rescue 'cannot preserve development init'
+for helper in collect-hardware-snapshot capture-input-events input-monitor; do
+	[ -x "/bin/$helper" ] || continue
+	cp "/bin/$helper" "/run/tb371fc-rescue/$helper" || \
+		rescue "cannot preserve $helper"
+done
+if [ -x /bin/start-v56-services ]; then
+	cp /bin/start-v56-services /run/tb371fc-rescue/start-v56-services || \
+		rescue 'cannot preserve V56 services helper'
+	chmod 0755 /run/tb371fc-rescue/start-v56-services
+fi
+if [ -s /bin/wlan-v56.ko ]; then
+	cp /bin/wlan-v56.ko /run/tb371fc-rescue/wlan-v56.ko || \
+		rescue 'cannot preserve V56 WLAN module'
+	chmod 0644 /run/tb371fc-rescue/wlan-v56.ko
+fi
+if [ -x /bin/drm-kms-smoketest ]; then
+	cp /bin/drm-kms-smoketest /run/tb371fc-rescue/drm-kms-smoketest || \
+		rescue 'cannot preserve DRM/KMS smoke test'
+fi
+if [ -x /bin/kexec ]; then
+	for helper in kexec start-kexec-receiver load-mainline-kexec \
+		execute-mainline-kexec; do
+		cp "/bin/$helper" "/run/tb371fc-rescue/$helper" || \
+			rescue "cannot preserve $helper"
+	done
+fi
+chmod 0755 /run/tb371fc-rescue/return-to-bootloader \
+	/run/tb371fc-rescue/development-init /run/tb371fc-rescue/busybox
+for helper in collect-hardware-snapshot capture-input-events input-monitor; do
+	[ ! -e "/run/tb371fc-rescue/$helper" ] || \
+		chmod 0755 "/run/tb371fc-rescue/$helper"
+done
+[ ! -e /run/tb371fc-rescue/drm-kms-smoketest ] || \
+	chmod 0755 /run/tb371fc-rescue/drm-kms-smoketest
+[ ! -e /run/tb371fc-rescue/kexec ] || \
+	chmod 0755 /run/tb371fc-rescue/kexec \
+		/run/tb371fc-rescue/start-kexec-receiver \
+		/run/tb371fc-rescue/load-mainline-kexec \
+		/run/tb371fc-rescue/execute-mainline-kexec
+
+old_rescue_pid=$(cat /run/tb371fc-rescue-shell.pid 2>/dev/null || true)
+old_watchdog_pid=$(cat /run/tb371fc-network-watchdog.pid 2>/dev/null || true)
+old_kexec_receiver_pids=
+for pidfile in /run/tb371fc-kexec/receiver-*.pid; do
+	[ -r "$pidfile" ] || continue
+	old_kexec_receiver_pids="$old_kexec_receiver_pids $(cat "$pidfile")"
+done
+
+# The loop device holds the backing file open. Detach the exFAT mount from the
+# namespace before switch_root, so BusyBox cannot recurse into the user's card
+# while deleting the old initramfs tree. The mounted filesystem remains alive
+# until loop0 releases its file reference, and global sync flushes it normally.
+umount -l "$sd_mount" || rescue 'cannot detach microSD mount before switch_root'
+mount --move /run "$new_root/run" || rescue 'cannot move rescue tmpfs'
+
+# A child created before switch_root retains the old process root. Replace the
+# early listener with one already chrooted into Arch, while its executable and
+# shell remain static BusyBox files in the moved /run tmpfs.
+[ -z "$old_watchdog_pid" ] || kill "$old_watchdog_pid" 2>/dev/null || true
+[ -z "$old_rescue_pid" ] || kill "$old_rescue_pid" 2>/dev/null || true
+for receiver_pid in $old_kexec_receiver_pids; do
+	kill "$receiver_pid" 2>/dev/null || true
+done
+# Use a separate transition port. This removes the race with the early port
+# 2323 listener and gives the host an independently testable Arch-root shell
+# while PID 1 moves the virtual filesystems and executes switch_root.
+chroot "$new_root" /run/tb371fc-rescue/busybox nc -lk -p 2324 \
+	-e /run/tb371fc-rescue/sh &
+transition_rescue_pid=$!
+echo "$transition_rescue_pid" >"$new_root/run/tb371fc-transition-shell.pid"
+sleep 1
+if ! kill -0 "$transition_rescue_pid" 2>/dev/null; then
+	/bin/busybox nc -lk -p 2323 \
+		-e "$new_root/run/tb371fc-rescue/sh" &
+	rescue 'new-root rescue listener failed to stay alive'
+fi
+echo 'new-root-transition-listener-ready-port-2324' >>"$handoff_log"
+echo '[TB371FC Linux] rescue handoff verified; entering Arch'
+
+mount --move /dev "$new_root/dev" || rescue 'cannot move devtmpfs'
+mount --move /proc "$new_root/proc" || rescue 'cannot move procfs'
+mount --move /sys "$new_root/sys" || rescue 'cannot move sysfs'
+if [ -x "$new_root/run/tb371fc-rescue/kexec" ]; then
+	chroot "$new_root" /run/tb371fc-rescue/busybox sh \
+		/run/tb371fc-rescue/start-kexec-receiver || \
+		rescue 'cannot restart kexec receivers in Arch root'
+fi
+echo 'virtual-filesystems-moved switch-root-next' >>"$handoff_log"
+sync
+exec switch_root "$new_root" /run/tb371fc-rescue/busybox sh \
+	/run/tb371fc-rescue/development-init

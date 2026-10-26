@@ -1,0 +1,37 @@
+drm/msm/dpu: keep the real interface count for DSC topologies
+
+Linux 6.12 forces topology.num_intf = 1 whenever DSC is used. On a bonded
+(dual) DSI panel with DSC the virtual encoder still has two physical
+encoders, but the resource manager then reserves only one CTL. In
+dpu_encoder_virt_atomic_mode_set() the second physical encoder gets no CTL,
+the function bails out with "no ctl block assigned at idx: 1" and the next
+dpu_crtc_atomic_begin() dereferences NULL (seen on TB371FC, R142 log).
+
+Linux 7.1 counts the real interfaces for DSC as well (dpu_encoder_update_topology).
+Keep intf_count here, so bonded DSI + DSC reserves two split-display CTLs,
+two LMs and two DSC blocks - the same CTL layout 6.12 already uses for
+bonded DSI without DSC.
+
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+@@ -612,13 +612,15 @@ static struct msm_display_topology dpu_encoder_get_topology(
+ 	if (dsc) {
+ 		/*
+-		 * In case of Display Stream Compression (DSC), we would use
+-		 * 2 DSC encoders, 2 layer mixers and 1 interface
+-		 * this is power optimal and can drive up to (including) 4k
+-		 * screens
++		 * In case of Display Stream Compression (DSC), we use
++		 * 2 DSC encoders, 2 layer mixers and 1 or 2 interfaces.
++		 * A bonded DSI encoder has 2 physical encoders, each needs
++		 * its own CTL, so keep the real interface count (as 7.1 does).
+ 		 */
++		WARN(intf_count > 2,
++		     "DSC topology cannot support more than 2 interfaces\n");
+ 		topology.num_dsc = 2;
+ 		topology.num_lm = 2;
+-		topology.num_intf = 1;
++		topology.num_intf = intf_count;
+ 	}
+
+ 	return topology;

@@ -1,0 +1,75 @@
+#!/bin/sh
+# R164 first-stage autoboot: 4.19 console -> Linux 6.12 R164 desktop (touch, KDE, keyboard, sleep masked, speakers, Wi-Fi, apps layer, cpufreq + thermal).
+# Runs only if boot-arch-development-rootfs copied the payload from
+# microSD tb371fc-linux/autoboot-6.12-r164/ (needs the ENABLE file there).
+# Any button press or screen touch during the countdown cancels it.
+set -u
+bb=/run/tb371fc-rescue/busybox
+kexec=/run/tb371fc-rescue/kexec
+dir=/run/tb371fc-autoboot
+ev=$dir/events
+log=/run/tb371fc-autoboot.log
+
+say() {
+	printf '%s\n' "$*"
+	[ -c /dev/tty0 ] && printf '%s\n' "$*" >/dev/tty0 2>/dev/null
+	return 0
+}
+fail() { say "TB371FC AUTOBOOT: $*; staying in the 4.19 console."; exit 1; }
+hash_ok() { [ "$("$bb" sha256sum "$dir/$1" 2>/dev/null | "$bb" awk '{print $1}')" = "$2" ]; }
+
+[ -d "$dir" ] || exit 0
+hash_ok Image 62763187b5dc1958419462a83bbd2f0cc9fa19f31bf0e3700cd1167314172dac || fail 'Image hash mismatch'
+hash_ok board.dtb 49c42b852bdb93e6e001248fce82290dcf19f9f67cbdc1a828ec2b58eecdc680 || fail 'DTB hash mismatch'
+hash_ok initramfs.cpio.gz d6f308bcc280a2a13ca234f297768c7d526223938b88ce8b99aca0133606bd0d || fail 'initramfs hash mismatch'
+[ -x "$kexec" ] && [ -x /run/tb371fc-rescue/execute-linux-6.12-r38 ] || fail 'kexec helpers missing'
+
+# Let the console settle, then ignore input devices that are noisy by themselves.
+"$bb" sleep 3
+mkdir -p "$ev"
+noisy=
+for e in /dev/input/event*; do
+	[ -c "$e" ] || continue
+	n=${e##*/}
+	"$bb" timeout 1 "$bb" cat "$e" >"$ev/pre-$n" 2>/dev/null
+	[ -s "$ev/pre-$n" ] && noisy="$noisy $n"
+done
+pids=
+for e in /dev/input/event*; do
+	[ -c "$e" ] || continue
+	n=${e##*/}
+	case " $noisy " in *" $n "*) continue ;; esac
+	"$bb" cat "$e" >"$ev/$n" 2>/dev/null &
+	pids="$pids $!"
+done
+
+touched() {
+	for f in "$ev"/event*; do [ -s "$f" ] && return 0; done
+	return 1
+}
+say ''
+say '=================================================================='
+say ' TB371FC AUTOBOOT: Linux 6.12 + KDE desktop starts in 7 seconds.'
+say ' Press any button or touch the screen to STAY in the 4.19 console.'
+say '=================================================================='
+cancel=0
+for n in 7 6 5 4 3 2 1; do
+	say "   $n ..."
+	"$bb" sleep 1
+	if touched; then cancel=1; break; fi
+done
+for p in $pids; do kill "$p" 2>/dev/null; done
+if [ "$cancel" = 1 ]; then
+	echo cancelled >"$dir/state"
+	say 'TB371FC AUTOBOOT: cancelled by user input; the 4.19 console stays.'
+	exit 0
+fi
+
+cmdline='console=tty0 fbcon=font:TER16x32 earlycon=qcom_geni,0x988000 keep_bootcon ignore_loglevel loglevel=8 log_buf_len=8M rdinit=/init root=/dev/ram0 rw fw_devlink=off clk_ignore_unused pd_ignore_unused regulator_ignore_unused panic=0 initcall_debug printk.time=1 swiotlb=2048 reset_devices rodata=on systemd.unit=multi-user.target systemd.show_status=1'
+"$kexec" -u 2>/dev/null || true
+"$kexec" -c -l "$dir/Image" --dtb="$dir/board.dtb" --initrd="$dir/initramfs.cpio.gz" --append="$cmdline" || fail 'kexec load failed'
+[ "$(cat /sys/kernel/kexec_loaded)" = 1 ] || fail 'kexec_loaded is not 1'
+echo loaded >/run/tb371fc-linux612-r38.state
+echo starting >"$dir/state"
+say 'TB371FC AUTOBOOT: payload verified; starting Linux 6.12 now.'
+exec /run/tb371fc-rescue/execute-linux-6.12-r38

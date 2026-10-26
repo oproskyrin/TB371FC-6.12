@@ -1,0 +1,19 @@
+#!/bin/sh
+
+clear
+printf '\n'
+printf '  TB371FC ARCH LINUX v14\n'
+printf '  ======================\n\n'
+printf '  Display: 2944x1840, DSI + DSC\n'
+printf '  Refresh: 120 Hz\n'
+if [ -c /dev/ttyGS0 ]; then
+	printf '  USB SSH: ACM serial tunnel, host localhost:22222\n\n'
+else
+	printf '  USB SSH: root@169.254.77.2:2222\n\n'
+fi
+printf '  Linux userspace and Wayland are running.\n\n'
+
+while :; do
+	printf '\r  Uptime: %s seconds  ' "$(cut -d. -f1 /proc/uptime)"
+	sleep 1
+done

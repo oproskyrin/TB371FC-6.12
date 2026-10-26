@@ -1,0 +1,184 @@
+#!/bin/sh
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /proc /sys /run /tmp
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+if ! grep -q ' /dev ' /proc/mounts; then
+	mount -t tmpfs -o mode=0755,nosuid tmpfs /dev || {
+		echo 'Cannot create movable /dev tmpfs' >&2
+		exec setsid cttyhack sh
+	}
+fi
+mkdir -p /dev/pts /sys/kernel/debug
+[ -c /dev/console ] || busybox mknod -m 600 /dev/console c 5 1
+[ -c /dev/null ] || busybox mknod -m 666 /dev/null c 1 3
+[ -c /dev/zero ] || busybox mknod -m 666 /dev/zero c 1 5
+[ -c /dev/tty ] || busybox mknod -m 666 /dev/tty c 5 0
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+
+if [ -e /sys/class/tty/tty0/dev ] && \
+	grep -qx '4:0' /sys/class/tty/tty0/dev && [ ! -c /dev/tty0 ]; then
+	busybox mknod -m 620 /dev/tty0 c 4 0
+fi
+if [ -e /sys/class/graphics/fb0/dev ] && \
+	grep -qx '29:0' /sys/class/graphics/fb0/dev && [ ! -c /dev/fb0 ]; then
+	busybox mknod -m 600 /dev/fb0 c 29 0
+fi
+show_status() {
+	echo "[TB371FC Linux] $*" >/dev/tty0 2>/dev/null || true
+	echo "[TB371FC Linux] $*"
+}
+refresh_visible_console() {
+	for vtconsole in /sys/class/vtconsole/vtcon*; do
+		[ -r "$vtconsole/name" ] || continue
+		case "$(cat "$vtconsole/name")" in
+			*frame\ buffer*) echo 1 >"$vtconsole/bind" 2>/dev/null || true ;;
+		esac
+	done
+	[ ! -w /sys/class/graphics/fb0/blank ] || \
+		echo 0 >/sys/class/graphics/fb0/blank 2>/dev/null || true
+}
+
+capture_graphics_snapshot() {
+	out=/run/tb371fc-linux7-graphics-snapshot.txt
+	{
+		echo '===== identity ====='
+		uname -a
+		cat /proc/cmdline 2>/dev/null || true
+		echo '===== framebuffer ====='
+		cat /proc/fb 2>/dev/null || true
+		for node in /sys/class/graphics/fb*; do
+			[ -e "$node" ] || continue
+			echo "--- $node ---"
+			for property in name mode modes stride bits_per_pixel virtual_size blank; do
+				[ ! -r "$node/$property" ] || {
+					printf '%s=' "$property"
+					cat "$node/$property" 2>/dev/null || true
+				}
+				done
+		done
+		echo '===== framebuffer-fingerprint ====='
+		if [ -r /dev/fb0 ]; then
+			# The TB371FC native scanout is 2944x1840x4 bytes. Hashing the
+			# visible area lets the host distinguish an untouched ABL splash,
+			# an fbcon update and a deliberately rendered diagnostic pattern
+			# without transferring a 21 MiB frame over the rescue serial link.
+			dd if=/dev/fb0 bs=4096 count=5290 2>/dev/null | sha256sum || true
+			printf 'first-256-bytes='
+			dd if=/dev/fb0 bs=256 count=1 2>/dev/null | \
+				od -An -tx4 2>/dev/null | tr '\n' ' ' || true
+			echo
+		else
+			echo 'fb0 unavailable'
+		fi
+		echo '===== display-memory-map ====='
+		grep -i -E 'framebuffer|display|mdss|dsi|gpu|splash|9c000000' \
+			/proc/iomem 2>/dev/null || true
+		echo '===== drm-connectors ====='
+		for connector in /sys/class/drm/card*-*; do
+			[ -e "$connector" ] || continue
+			echo "--- $connector ---"
+			for property in status enabled modes dpms; do
+				[ ! -r "$connector/$property" ] || {
+					printf '%s=' "$property"
+					cat "$connector/$property" 2>/dev/null || true
+				}
+			done
+		done
+		echo '===== dri ====='
+		ls -la /dev/dri 2>/dev/null || true
+		for node in /sys/class/drm/card*/device/uevent \
+			/sys/class/drm/renderD*/device/uevent; do
+			[ ! -r "$node" ] || {
+				echo "--- $node ---"
+				cat "$node" 2>/dev/null || true
+			}
+		done
+		for node in /sys/kernel/debug/dri/*/name \
+			/sys/kernel/debug/dri/*/state \
+			/sys/kernel/debug/dri/*/clients; do
+			[ ! -r "$node" ] || {
+				echo "--- $node ---"
+				cat "$node" 2>/dev/null || true
+			}
+		done
+		echo '===== display-device-tree ====='
+		find /sys/firmware/devicetree/base -type d 2>/dev/null | \
+			grep -i -E 'dsi|panel|display|mdss|gpu' | sort || true
+		echo '===== graphics-modules ====='
+		lsmod 2>/dev/null | grep -i -E 'drm|msm|dsi|adreno|gpu|panel|fb' || true
+		echo '===== display-dmesg ====='
+		dmesg | grep -i -E 'drm|sde|dsi|mdss|simple.?frame|fb0|adreno|gpu|panel|backlight|splash|display|iommu' || true
+		echo 'TB371FC_LINUX7_GRAPHICS_SNAPSHOT_COMPLETE'
+	} >"$out" 2>&1
+}
+
+hostname tb371fc-arch-loader
+dmesg -n 8
+show_status 'kernel started; preparing USB rescue and Arch root'
+
+for module in pwrseq_qcom_wcn ath11k_pci msm qcom_spmi_adc_tm5 nt36523_ts \
+	r8152 ax88179_178a cdc_ether; do
+	modprobe "$module" 2>/dev/null || true
+done
+refresh_visible_console
+show_status 'visible console refresh requested'
+capture_graphics_snapshot
+
+if setup-usb-console; then
+	for _ in $(seq 1 60); do
+		[ -e /sys/class/net/usb0 ] && break
+		sleep 1
+	done
+	[ -e /sys/class/net/usb0 ] || {
+		echo 'usb0 did not appear; refusing the Arch handoff.' >&2
+		exec setsid cttyhack sh
+	}
+	busybox ip link set usb0 up
+	busybox ip addr add 169.254.77.2/16 dev usb0 2>/dev/null || \
+		busybox ifconfig usb0 169.254.77.2 netmask 255.255.0.0 up
+	busybox ip addr show dev usb0 | grep -q 'inet 169.254.77.2/' || {
+		show_status 'FATAL: USB IPv4 address was not applied; Arch handoff stopped'
+		exec setsid cttyhack sh
+	}
+	mkdir -p /run/tb371fc-rescue
+	cp /bin/busybox /run/tb371fc-rescue/busybox
+	ln -sf busybox /run/tb371fc-rescue/sh
+	( exec busybox nc -lk -p 2323 -e /run/tb371fc-rescue/sh ) &
+	echo $! >/run/tb371fc-rescue-shell.pid
+	show_status 'USB rescue ready: 169.254.77.2 port 2323'
+	(
+		while :; do
+			busybox ip addr add 169.254.77.2/16 dev usb0 2>/dev/null || true
+			busybox ip link set usb0 up 2>/dev/null || true
+			sleep 2
+		done
+	) &
+	echo $! >/run/tb371fc-network-watchdog.pid
+	refresh_visible_console
+	show_status 'Linux is active; USB recovery channel verified locally'
+	if [ -c /dev/ttyGS0 ]; then
+		(
+			echo '===== TB371FC_LINUX7_USB_KMSG_BEGIN ====='
+			cat /run/tb371fc-linux7-graphics-snapshot.txt
+			dmesg
+			echo '===== TB371FC_LINUX7_LIVE_KMSG_BEGIN ====='
+			exec dmesg -w
+		) >/dev/ttyGS0 2>&1 &
+		echo $! >/run/tb371fc-linux7-usb-kmsg.pid
+	fi
+	if command -v start-kexec-receiver >/dev/null 2>&1; then
+		start-kexec-receiver
+		show_status 'kexec receiver ready: ports 2325-2327; no automatic execution'
+	fi
+fi
+
+echo 'TB371FC Arch development loader started.'
+echo 'Trying /dev/mmcblk0p1/tb371fc-linux/tb371fc-arch-development.raw'
+show_status 'mounting persistent Arch image from microSD'
+exec boot-arch-development-rootfs

@@ -1,0 +1,57 @@
+#!/bin/sh
+
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mkdir -p /dev/pts /proc /sys /run /tmp /sys/kernel/debug /sys/kernel/config
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
+mount -t configfs configfs /sys/kernel/config 2>/dev/null || true
+mount -t tmpfs tmpfs /run 2>/dev/null || true
+mount -t tmpfs tmpfs /tmp 2>/dev/null || true
+
+hostname tb371fc-display-gated
+dmesg -n 8
+
+usb_status=failed
+if setup-usb-console; then
+	usb_status=$(cat /run/tb371fc-usb-mode 2>/dev/null || echo ready)
+	if [ "$usb_status" = acm ]; then
+		getty -L -n -l /bin/sh 115200 ttyGS0 vt100 &
+	elif [ "$usb_status" = ncm ]; then
+		for second in 1 2 3 4 5; do
+			[ -e /sys/class/net/usb0 ] && break
+			sleep 1
+		done
+		ip addr add 169.254.77.2/16 dev usb0 2>/dev/null || true
+		ip link set usb0 up 2>/dev/null || true
+		busybox telnetd -p 2323 -l /bin/sh
+	fi
+fi
+
+for second in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+	[ -c /dev/dri/card0 ] && break
+	sleep 1
+done
+
+snapshot-mainline-display /run/tb371fc-display-probe.txt >/dev/null 2>&1 || true
+
+echo
+echo "TB371FC Linux 7.1 gated native-display diagnostic"
+echo "USB transport: $usb_status"
+if [ -c /dev/dri/card0 ]; then
+	echo "DRM card0: ready; no native modeset has been requested yet"
+else
+	echo "DRM card0: missing; do not attempt a modeset"
+fi
+echo "Automatic DRM fbdev emulation is disabled for this diagnostic."
+echo "Initial snapshot: /run/tb371fc-display-probe.txt"
+echo "From the USB shell, start the attended test with:"
+echo "  run-mainline-display-test 120 checker 120"
+echo "Then inspect it with:"
+echo "  status-mainline-display-test"
+echo "No Android partition was mounted or modified."
+
+exec setsid cttyhack sh
+
