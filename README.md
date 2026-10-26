@@ -39,7 +39,8 @@ Linux целиком живёт на карте и стартует через �
 | Батарея: уровень заряда, ёмкость, циклы (датчик MM8013), значок в KDE | ✅ |
 | Подкачка zram (3,5 ГБ сжатой памяти) | ✅ |
 | Ограничение заряда батареи (по умолчанию 80/75%, `/etc/tb371fc/chglimit.conf`) | ✅ |
-| Микрофоны | ❌ |
+| Встроенный микрофон (основной, моно; WCD938x по SoundWire) | ✅ |
+| Второй микрофон (шумоподавление) | ❌ |
 | Рабочий стол через ~11 с после старта Linux; песочница Chromium (USER_NS + PID_NS + seccomp) | ✅ |
 | USB-C: только USB 2.0 в режиме устройства (связь с ПК); хост-режим (флешки, хабы), USB 3 и вывод изображения — ещё нет | ❌ |
 | Chromium на GPU (WebGL, растеризация); видео 1080p плавно — 1,5–3% пропущенных кадров (без GPU 26%) | ✅ |
@@ -98,7 +99,7 @@ Linux целиком живёт на карте и стартует через �
 | `docs/` | Ранние заметки по порту (панель, звук, тачскрин, recovery, таблица железа…) |
 
 Проект рос выпуск за выпуском (R1 … R183), номер выпуска есть в имени файлов.
-Текущий рабочий выпуск — **R188** (батарея, ускорение графики, ядро с USER_NS/PID_NS).
+Текущий рабочий выпуск — **R191** (батарея, ускорение графики, микрофон, ядро с USER_NS/PID_NS).
 
 ## Установка (обзор)
 
@@ -150,12 +151,13 @@ $env:TB371FC_SERIAL = '<серийный номер из "fastboot devices">'
 ```bash
 bash scripts/package-r179-autoboot.sh                 # Image + initramfs.cpio.gz (headless GPU)
 bash scripts/build-r185-gpu-dt.sh                     # board.dtb: батарея + GPU
-bash scripts/build-r187-userns-kernel.sh              # Image: USER_NS + PID_NS
-python3 scripts/package-r188-autoboot-recovery.py     # образ recovery_b с помощником автозагрузки
+bash scripts/build-r191-kernel.sh                     # Image: USER_NS + PID_NS + звук
+bash scripts/prepare-r190-mic-dt.sh                   # board.dtb: + микрофон
+python3 scripts/package-r191-autoboot-recovery.py     # образ recovery_b с помощником автозагрузки
 ```
 
-Скопируйте набор в `p1:/tb371fc-linux/autoboot-6.12-r188/` вместе с пустым файлом
-`ENABLE` (или дайте это сделать `scripts/r188-sd-install-419.sh` из консоли).
+Скопируйте набор в `p1:/tb371fc-linux/autoboot-6.12-r191/` вместе с пустым файлом
+`ENABLE` (или дайте это сделать `scripts/r191-sd-install-419.sh` из консоли).
 На корневую ФС положите файлы из `scripts/r184-config/` (zram, батарея, UPower, GPU — см. комментарии в них).
 
 **Wi-Fi:** ваша сеть прописывается при сборке из файла в формате `wpa_supplicant`,
