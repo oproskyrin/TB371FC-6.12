@@ -1,0 +1,13 @@
+[Unit]
+Description=TB371FC battery charge limit (PM8150B charging enable bit, MM8013 capacity)
+After=tb371fc-battery.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=-/etc/tb371fc/chglimit.conf
+ExecStart=/bin/sh -c 'grep -q "^tb371fc_chglimit " /proc/modules || insmod /usr/local/lib/tb371fc/tb371fc-chglimit.ko enable=${ENABLE:-0} stop=${STOP:-80} start=${START:-75}'
+ExecStop=/bin/sh -c 'rmmod tb371fc_chglimit 2>/dev/null || true'
+
+[Install]
+WantedBy=multi-user.target

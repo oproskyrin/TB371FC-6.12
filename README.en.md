@@ -39,6 +39,8 @@ tablet's second recovery slot (`recovery_b`).
 | CPU frequency scaling, thermal throttling | ✅ |
 | Battery: charge level, capacity, cycles (MM8013 gauge), KDE indicator | ✅ |
 | zram swap (3.5 GB compressed RAM) | ✅ |
+| Battery charge limit (default 80/75 %, `/etc/tb371fc/chglimit.conf`) | ✅ |
+| Microphones | ❌ |
 | Desktop ~11 s after Linux starts; Chromium sandbox (USER_NS + PID_NS + seccomp) | ✅ |
 | USB-C: USB 2.0 device mode only (PC link); host mode (flash drives, hubs), USB 3 and video output not yet | ❌ |
 | Chromium on the GPU (WebGL, rasterization); 1080p video smooth — 1.5–3 % dropped frames (26 % without GPU) | ✅ |
