@@ -189,9 +189,9 @@ recovery в меню загрузчика). Появится консоль, ч�
 
 Если проект вам помог, можно угостить автора кофе:
 
-* **Boosty:** _ссылка скоро будет_
-* **CloudTips / Т-Банк:** _ссылка скоро будет_
-* **Криптовалюта (USDT TRC-20):** _адрес скоро будет_
+[![Поддержать на Boosty](https://img.shields.io/badge/Boosty-поддержать%20проект-F15F2C?logo=boosty&logoColor=white)](https://boosty.to/slvgb)
+
+**Boosty:** <https://boosty.to/slvgb>
 
 ## Лицензия
 

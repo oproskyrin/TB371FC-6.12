@@ -191,9 +191,9 @@ themes are yours to change and persist across reboots.
 
 If this project helped you, you can buy the author a coffee:
 
-* **Boosty:** _link coming soon_
-* **CloudTips / T-Bank:** _link coming soon_
-* **Crypto (USDT TRC-20):** _address coming soon_
+[![Support on Boosty](https://img.shields.io/badge/Boosty-support%20the%20project-F15F2C?logo=boosty&logoColor=white)](https://boosty.to/slvgb)
+
+**Boosty:** <https://boosty.to/slvgb>
 
 ## License
 
