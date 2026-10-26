@@ -39,6 +39,8 @@ tablet's second recovery slot (`recovery_b`).
 | CPU frequency scaling, thermal throttling | ✅ |
 | Battery: charge level, capacity, cycles (MM8013 gauge), KDE indicator | ✅ |
 | zram swap (3.5 GB compressed RAM) | ✅ |
+| Chromium on the GPU (WebGL, rasterization); 1080p video smooth — 1.5–3 % dropped frames (26 % without GPU) | ✅ |
+| Hardware video decoding (Venus) | ❌ |
 | Adreno 650 GPU (freedreno, OpenGL 4.6) — KWin hardware compositing | ✅ |
 | Display: framebuffer handed over from the bootloader (simpledrm, 60 Hz) | ⚠️ |
 | Native DPU/DSI display driver, 120 Hz | ❌ in progress (left half correct, right half noise) |
