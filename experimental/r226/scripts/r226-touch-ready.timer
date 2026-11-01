@@ -1,0 +1,8 @@
+[Unit]
+Description=R226 defer touch/USB candidate until normal boot ordering completes
+ConditionKernelCommandLine=tb371fc.r226
+
+[Timer]
+OnBootSec=20s
+AccuracySec=1s
+Unit=r226-touch-ready.service

@@ -1,0 +1,11 @@
+[Unit]
+Description=R226 opt-in R209 USB3 peripheral profile (fixed orientation)
+After=network.target r226-touch-ready.service
+Wants=network.target
+ConditionKernelCommandLine=tb371fc.usb3test
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /run/r226/r226-usb3-ready.sh
+TimeoutStartSec=150
+RemainAfterExit=yes

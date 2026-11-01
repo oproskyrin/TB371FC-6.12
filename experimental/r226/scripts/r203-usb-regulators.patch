@@ -1,0 +1,54 @@
+--- a/r203-usb-regulators.c
++++ b/r203-usb-regulators.c
+@@ -446,7 +446,10 @@
+ 	}
+ 
+ 	vreg->rdesc.name = rpmh_data->name;
+-	vreg->rdesc.supply_name = rpmh_data->supply_name;
++	/* Diagnostic scope: upstream SMPS rails retain the inherited stock votes.
++	 * Do not register or alter unrelated parent regulator constraints.
++	 */
++	vreg->rdesc.supply_name = NULL;
+ 	vreg->hw_data = rpmh_data->hw_data;
+ 
+ 	vreg->enabled = -EINVAL;
+@@ -470,6 +473,14 @@
+ 	init_data = of_get_regulator_init_data(dev, node, &vreg->rdesc);
+ 	if (!init_data)
+ 		return -ENOMEM;
++	/* Stock Lenovo ssphy@88e8000 requests L18A=912000uV; not donor minimum. */
++	if (of_node_name_eq(node, "ldo18")) {
++		init_data->constraints.min_uV = 912000;
++		init_data->constraints.max_uV = 912000;
++		init_data->constraints.apply_uV = true;
++	}
++	dev_info(dev, "R203 scoped USB regulator: %pOFn\n", node);
++
+ 
+ 	if (rpmh_data->hw_data->regulator_type == XOB &&
+ 	    init_data->constraints.min_uV &&
+@@ -1544,7 +1555,16 @@
+ 		return ret;
+ 	}
+ 
++	/* Only PM8150A USB L9/L18 and the retimer's S4 rail, no VBUS sourcing. */
++	if (strcmp(pmic_id, "a"))
++		return -ENODEV;
++
+ 	for_each_available_child_of_node_scoped(dev->of_node, node) {
++		if (!of_node_name_eq(node, "ldo9") &&
++		    !of_node_name_eq(node, "ldo18") &&
++		    !of_node_name_eq(node, "smps4"))
++			continue;
++
+ 		vreg = devm_kzalloc(dev, sizeof(*vreg), GFP_KERNEL);
+ 		if (!vreg)
+ 			return -ENOMEM;
+@@ -1659,7 +1679,7 @@
+ static struct platform_driver rpmh_regulator_driver = {
+ 	.driver = {
+-		.name = "qcom-rpmh-regulator",
++		.name = "r203-usb-regulators",
+ 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
+ 		.of_match_table	= of_match_ptr(rpmh_regulator_match_table),
+ 	},

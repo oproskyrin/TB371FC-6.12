@@ -1,0 +1,12 @@
+[Unit]
+Description=R226 restore Novatek touch firmware after native panel startup
+After=tb371fc-native-display.service r149-plasma.service
+Requires=tb371fc-native-display.service r149-plasma.service
+ConditionKernelCommandLine=tb371fc.r226
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /run/r226/r226-touch-ready.sh
+ExecStartPost=/usr/bin/systemctl --no-block start r226-usb3-ready.service
+TimeoutStartSec=45
+RemainAfterExit=yes
