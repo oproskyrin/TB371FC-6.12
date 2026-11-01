@@ -4,6 +4,14 @@ Experimental, board-specific work on the existing TB371FC Linux 6.12.114 setup.
 This directory is a development snapshot, not a universal installer or a promise
 that every microSD/cable/connector orientation will work.
 
+Installed-device confirmation: recovery v3 automatically selected R226 from
+microSD after flashing only recovery_b. The running cmdline contained all three
+profile flags, SD actual rate was 150 MHz, USB was SuperSpeed/configured/U0 and
+all MMC errors were zero. The operator confirmed the desktop and working touch
+after this installed boot. A 16 MiB RAM transfer each way passed SHA256; measured
+NCM throughput was 3.08 MB/s PC→tablet and 5.85 MB/s tablet→PC. No claim of fast
+USB application throughput is made. Original R201 files/image remain preserved.
+
 ## Hardware results
 
 - Real SDCC2 150 MHz SDR104, not a requested rate rounded down to 100 MHz.
