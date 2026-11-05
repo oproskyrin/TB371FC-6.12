@@ -1,0 +1,16 @@
+[Unit]
+Description=TB371FC guarded sink attach and SMB5 watchdog servicing
+After=tb371fc-battery.service tb371fc-chglimit.service
+Wants=tb371fc-battery.service tb371fc-chglimit.service
+ConditionPathExists=/sys/class/power_supply/mm8013
+ConditionKernelCommandLine=tb371fc.r226
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh /usr/local/sbin/tb371fc-r231-charge-load
+ExecStop=/usr/bin/rmmod r231_charge_keepalive
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

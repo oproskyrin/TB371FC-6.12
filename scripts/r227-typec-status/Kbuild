@@ -1,0 +1,1 @@
+obj-m += r227-typec-status.o

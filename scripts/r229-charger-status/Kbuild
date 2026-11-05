@@ -1,0 +1,1 @@
+obj-m += r229-charger-status.o

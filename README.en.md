@@ -2,6 +2,15 @@
 
 [Русский](README.md) · **English**
 
+Update 2026-11-05: development is paused; contributors are welcome.
+Latest installed, device-tested profile: [R226 SD150 + USB3 peripheral](experimental/r226/README.md).
+See the [R227–R241 source handoff](experimental/community-handoff/README.md) and
+[current installation/rollback guide](docs/INSTALL_CURRENT.md).
+USB hubs, PD negotiation and HDMI/DP are unfinished. R241 is built, NOT hardware-tested.
+No personal rootfs, provisioned initrd or SSH keys are distributed. This is a developer
+source project, not a complete one-click installer. Older installation examples below
+describe R191; they do not reproduce R226 unchanged.
+
 Arch Linux ARM with KDE Plasma running on the Lenovo **TB371FC** tablet, using a
 **Linux 6.12** kernel that is started from microSD. Android on the internal UFS stays
 untouched: Linux lives entirely on the microSD card and is started through the
@@ -44,13 +53,14 @@ tablet's second recovery slot (`recovery_b`).
 | Second microphone (noise suppression) | ❌ |
 | Hardware watchdog: a hung system resets back into the working release | ✅ |
 | Desktop ~11 s after Linux starts; Chromium sandbox (USER_NS + PID_NS + seccomp) | ✅ |
-| USB-C: USB 2.0 device mode only (PC link); host mode (flash drives, hubs), USB 3 and video output not yet | ❌ |
+| USB-C: USB3 SuperSpeed peripheral, fixed plug orientation; networking only ~3–6 MB/s | ✅ R226, experimental |
+| USB hubs, PD and HDMI/DP | ❌ unfinished; see the community handoff |
 | Chromium on the GPU (WebGL, rasterization); 1080p video smooth — 1.5–3 % dropped frames (26 % without GPU) | ✅ |
 | Hardware video decoding (Venus) | ❌ |
 | Adreno 650 GPU (freedreno, OpenGL 4.6) — KWin hardware compositing | ✅ |
 | Display: framebuffer handed over from the bootloader (simpledrm, 60 Hz) | ⚠️ |
 | Native DPU/DSI display driver, 120 Hz | ❌ in progress (left half correct, right half noise) |
-| microSD SDR104 writes | ❌ (reads work; needs BH201 output tuning) |
+| microSD SDR104 150 MHz | ✅ R226: ~65–67 MB/s read, ~44 MB/s write on tested card; 202 MHz writes not fixed |
 | Cameras (camera block unreachable after the recovery boot path, see `docs/CAMERA_INVESTIGATION.md`), sleep/suspend, dock keyboard pogo pins | ❌ / not tested |
 
 ## How it boots

@@ -1,0 +1,20 @@
+From: TB371FC experimental integration
+Subject: [TEST ONLY] qcom typec: avoid TRY_SNK at startup with powered hub
+
+Incomplete integration prerequisite, NOT a standalone safe HDMI release.
+For the isolated powered-hub sink-only profile ONLY. This deliberately removes
+source-mode support from port_start. DT must independently forbid source PDOs,
+and the test driver must reject source-role and VBUS-on requests. R231 ownership
+and charger input-current coordination MUST be resolved before loading TCPM.
+Do not apply to the working R226 tree or boot this patch alone.
+
+--- a/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c
++++ b/drivers/usb/typec/tcpm/qcom/qcom_pmic_typec_port.c
+@@ -654,5 +654,5 @@
+-	/* start in TRY_SNK mode */
++	/* Powered-hub test profile: never advertise source during startup. */
+ 	ret = regmap_write(pmic_typec_port->regmap,
+-			   pmic_typec_port->base + TYPEC_MODE_CFG_REG, EN_TRY_SNK);
++			   pmic_typec_port->base + TYPEC_MODE_CFG_REG, EN_SNK_ONLY);
+ 	if (ret)
+ 		goto done;

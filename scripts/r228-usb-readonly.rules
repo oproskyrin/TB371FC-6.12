@@ -1,0 +1,2 @@
+# Candidate-only USB storage protection. Place in /run/udev/rules.d/.
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", RUN+="/usr/bin/blockdev --setro $devnode"

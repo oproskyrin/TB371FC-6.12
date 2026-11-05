@@ -1,0 +1,1000 @@
+diff --git a/arch/arm64/Kconfig.debug b/arch/arm64/Kconfig.debug
+index 265c44610..78b54d262 100644
+--- a/arch/arm64/Kconfig.debug
++++ b/arch/arm64/Kconfig.debug
+@@ -20,4 +20,35 @@ config ARM64_RELOC_TEST
+ 	depends on m
+ 	tristate "Relocation testing module"
+ 
++config TB371FC_EARLY_FB_MARKER
++	bool "TB371FC staged early framebuffer markers"
++	default n
++	help
++	  Paint diagnostic bands in the Lenovo TB371FC continuous-splash
++	  framebuffer and record the last reached boot stage in the unused
++	  framebuffer tail. This is only for early boot localization and must
++	  remain disabled in production kernels.
++
+ source "drivers/hwtracing/coresight/Kconfig"
++
++config TB371FC_LATE_FB_MARKER
++	bool "TB371FC staged post-MMU framebuffer/scratch markers"
++	default n
++	help
++	  Paint diagnostic colour bands and record boot-stage/region
++	  diagnostics in fixed physical scratch memory (backed by
++	  early_ioremap, valid once the MMU is active) that survives a
++	  warm PSCI reset and can be read back afterwards. For early
++	  boot localization only; must remain disabled in production
++	  kernels.
++
++config TB371FC_POST_MMU_RESET_CHECKPOINT
++	bool "TB371FC single PSCI reset checkpoint right after MMU enable"
++	default n
++	help
++	  Issue a PSCI SYSTEM_RESET SMC call immediately after the SCTLR_EL1
++	  write in __enable_mmu, before any other instruction executes. Used
++	  to localize a kexec early-boot hang to before or after the MMU
++	  enable instant without relying on framebuffer writes, which are not
++	  valid once address translation is active. Must remain disabled in
++	  production kernels.
+diff --git a/arch/arm64/kernel/head.S b/arch/arm64/kernel/head.S
+index 25c08a0d2..7b13f4855 100644
+--- a/arch/arm64/kernel/head.S
++++ b/arch/arm64/kernel/head.S
+@@ -81,9 +81,61 @@
+ 	 *  x20        primary_entry() .. __primary_switch()    CPU boot mode
+ 	 *  x21        primary_entry() .. start_kernel()        FDT pointer passed at boot in x0
+ 	 */
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/*
++	 * Paint one 2944x256 a8r8g8b8 band. Store the diagnostic stage both in
++	 * the splash tail and in the final page of the dedicated boot-log
++	 * reservation. The latter is not consumed by the framebuffer and is the
++	 * durable handoff to the V56.5 reader after a watchdog reset.
++	 */
++	.macro	tb371fc_early_fb_band addr_hi, addr_lo, color_hi, color_lo
++	movz	x1, #0x0000
++	movk	x1, #0x9c00, lsl #16
++	movz	w2, #\color_lo
++	movk	w2, #\color_hi, lsl #16
++	movz	x3, #0x5c00
++	nop
++.Ltb371fc_fill_splash\@:
++	stp	w2, w2, [x1], #8
++	subs	x3, x3, #1
++	b.ne	.Ltb371fc_fill_splash\@
++	dsb	sy
++	.endm
++
++	.macro	tb371fc_early_stage_word stage
++
++	.endm
++
++	/* Full-screen marker which preserves the __enable_mmu x0-x3 arguments. */
++	.macro	tb371fc_mmu_stage color_hi, color_lo, stage
++	movz	x6, #0x0000
++	movk	x6, #0x9c00, lsl #16
++	movz	w7, #\color_lo
++	movk	w7, #\color_hi, lsl #16
++	movz	x8, #0x5c00
++	nop
++.Ltb371fc_fill_mmu\@:
++	stp	w7, w7, [x6], #8
++	subs	x8, x8, #1
++	b.ne	.Ltb371fc_fill_mmu\@
++	.endm
++#endif
++
+ SYM_CODE_START(primary_entry)
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	tb371fc_early_fb_band 0x9c00, 0x0000, 0xffff, 0x0000
++	tb371fc_early_stage_word 1
++#endif
+ 	bl	record_mmu_state
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	tb371fc_early_fb_band 0x9c2e, 0x0000, 0xff00, 0xff00
++	tb371fc_early_stage_word 2
++#endif
+ 	bl	preserve_boot_args
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	tb371fc_early_fb_band 0x9c5c, 0x0000, 0xff00, 0x00ff
++	tb371fc_early_stage_word 3
++#endif
+ 
+ 	adrp	x1, early_init_stack
+ 	mov	sp, x1
+@@ -92,6 +144,11 @@ SYM_CODE_START(primary_entry)
+ 	mov	x1, xzr
+ 	bl	__pi_create_init_idmap
+ 
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	tb371fc_early_fb_band 0x9c8a, 0x0000, 0xffff, 0xff00
++	tb371fc_early_stage_word 4
++#endif
++
+ 	/*
+ 	 * If the page tables have been populated with non-cacheable
+ 	 * accesses (MMU disabled), invalidate those tables again to
+@@ -115,10 +172,20 @@ SYM_CODE_START(primary_entry)
+ 	adr_l	x2, dcache_clean_poc
+ 	blr	x2
+ 
+-1:	mov	x0, x19
++1:
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	tb371fc_early_fb_band 0x9cb8, 0x0000, 0xffff, 0x00ff
++	tb371fc_early_stage_word 5
++#endif
++	mov	x0, x19
+ 	bl	init_kernel_el			// w0=cpu_boot_mode
+ 	mov	x20, x0
+ 
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	tb371fc_early_fb_band 0x9ce6, 0x0000, 0xff00, 0xffff
++	tb371fc_early_stage_word 6
++#endif
++
+ 	/*
+ 	 * The following calls CPU setup code, see arch/arm64/mm/proc.S for
+ 	 * details.
+@@ -126,6 +193,10 @@ SYM_CODE_START(primary_entry)
+ 	 * the TCR will have been set.
+ 	 */
+ 	bl	__cpu_setup			// initialise processor
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	tb371fc_early_fb_band 0x9d14, 0x0000, 0xffff, 0xffff
++	tb371fc_early_stage_word 7
++#endif
+ 	b	__primary_switch
+ SYM_CODE_END(primary_entry)
+ 
+@@ -215,6 +286,9 @@ SYM_CODE_END(preserve_boot_args)
+  *   x0 = __pa(KERNEL_START)
+  */
+ SYM_FUNC_START_LOCAL(__primary_switched)
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++	tb371fc_mmu_stage 0xffff, 0x0000, 91
++#endif
+ 	adr_l	x4, init_task
+ 	init_cpu_task x4, x5, x6
+ 
+@@ -234,11 +308,18 @@ SYM_FUNC_START_LOCAL(__primary_switched)
+ 	mov	x0, x20
+ 	bl	set_cpu_boot_mode_flag
+ 
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++	tb371fc_early_fb_band 0x9d14, 0x0000, 0xff00, 0x80ff
++#endif
++
+ #if defined(CONFIG_KASAN_GENERIC) || defined(CONFIG_KASAN_SW_TAGS)
+ 	bl	kasan_early_init
+ #endif
+ 	mov	x0, x20
+ 	bl	finalise_el2			// Prefer VHE if possible
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++	tb371fc_early_fb_band 0x9d14, 0x0000, 0xffff, 0x80c0
++#endif
+ 	ldp	x29, x30, [sp], #16
+ 	bl	start_kernel
+ 	ASM_BUG()
+@@ -454,15 +535,27 @@ SYM_FUNC_END(set_cpu_boot_mode_flag)
+  */
+ 	.section ".idmap.text","a"
+ SYM_FUNC_START(__enable_mmu)
+-	mrs	x3, ID_AA64MMFR0_EL1
+-	ubfx	x3, x3, #ID_AA64MMFR0_EL1_TGRAN_SHIFT, 4
+-	cmp     x3, #ID_AA64MMFR0_EL1_TGRAN_SUPPORTED_MIN
+-	b.lt    __no_granule_support
+-	cmp     x3, #ID_AA64MMFR0_EL1_TGRAN_SUPPORTED_MAX
+-	b.gt    __no_granule_support
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	tb371fc_mmu_stage 0xff40, 0x0000, 71
++#endif
++	/*
++	 * TB371FC/SM8250 has 4 KiB granules.  The Lenovo ABL handoff exposes an
++	 * unreliable ID_AA64MMFR0_EL1 read here, observed to park the boot CPU.
++	 * Keep the proven bypass independent from unsafe framebuffer diagnostics.
++	 */
++	mov	x3, xzr
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	tb371fc_mmu_stage 0xff00, 0x4040, 72
++#endif
+ 	phys_to_ttbr x2, x2
+ 	msr	ttbr0_el1, x2			// load TTBR0
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	tb371fc_mmu_stage 0xff40, 0x40ff, 73
++#endif
+ 	load_ttbr1 x1, x1, x3
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	tb371fc_mmu_stage 0xffff, 0xa500, 74
++#endif
+ 
+ 	set_sctlr_el1	x0
+ 
+@@ -506,10 +599,16 @@ SYM_FUNC_START_LOCAL(__primary_switch)
+ 	adrp	x1, reserved_pg_dir
+ 	adrp	x2, init_idmap_pg_dir
+ 	bl	__enable_mmu
++#ifdef CONFIG_TB371FC_POST_MMU_FB_MARKER
++	tb371fc_mmu_stage 0xffff, 0x0000, 81
++#endif
+ 
+ 	adrp	x1, early_init_stack
+ 	mov	sp, x1
+ 	mov	x29, xzr
++#ifdef CONFIG_TB371FC_POST_MMU_FB_MARKER
++	tb371fc_mmu_stage 0xff00, 0xff00, 82
++#endif
+ 	mov	x0, x20				// pass the full boot status
+ 	mov	x1, x21				// pass the FDT
+ 	bl	__pi_early_map_kernel		// Map and relocate the kernel
+diff --git a/arch/arm64/kernel/pi/map_range.c b/arch/arm64/kernel/pi/map_range.c
+index 5410b2cac..087eb1733 100644
+--- a/arch/arm64/kernel/pi/map_range.c
++++ b/arch/arm64/kernel/pi/map_range.c
+@@ -100,6 +100,15 @@ asmlinkage u64 __init create_init_idmap(pgd_t *pg_dir, pteval_t clrmask)
+ 		  text_prot, IDMAP_ROOT_LEVEL, (pte_t *)pg_dir, false, 0);
+ 	map_range(&ptep, (u64)__initdata_begin, (u64)_end, (u64)__initdata_begin,
+ 		  data_prot, IDMAP_ROOT_LEVEL, (pte_t *)pg_dir, false, 0);
++#ifdef CONFIG_TB371FC_EARLY_FB_MARKER
++	/* Keep the visible splash and both retained stage pages identity mapped. */
++	map_range(&ptep, 0x9c000000ULL, 0x9d600000ULL,
++		  0x9c000000ULL, data_prot, IDMAP_ROOT_LEVEL,
++		  (pte_t *)pg_dir, false, 0);
++	map_range(&ptep, 0xb007f000ULL, 0xb0080000ULL,
++		  0xb007f000ULL, data_prot, IDMAP_ROOT_LEVEL,
++		  (pte_t *)pg_dir, false, 0);
++#endif
+ 
+ 	return ptep;
+ }
+diff --git a/arch/arm64/kernel/setup.c b/arch/arm64/kernel/setup.c
+index 8185979f0..4e8dd7b20 100644
+--- a/arch/arm64/kernel/setup.c
++++ b/arch/arm64/kernel/setup.c
+@@ -34,6 +34,7 @@
+ #include <linux/mm.h>
+ 
+ #include <asm/acpi.h>
++#include <asm/early_ioremap.h>
+ #include <asm/fixmap.h>
+ #include <asm/cpu.h>
+ #include <asm/cputype.h>
+@@ -279,8 +280,133 @@ u64 cpu_logical_map(unsigned int cpu)
+ 	return __cpu_logical_map[cpu];
+ }
+ 
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++#define TB371FC_FB_STRIDE_PIXELS	2944UL
++#define TB371FC_FB_MARKER_PHYS		0x9d140000ULL
++#define TB371FC_FB_WIDE_ROWS		256UL
++#define TB371FC_FB_FIXMAP_ROWS		16UL
++#define TB371FC_FB_FIXMAP_SIZE \
++	(TB371FC_FB_STRIDE_PIXELS * TB371FC_FB_FIXMAP_ROWS * sizeof(u32))
++#define TB371FC_STAGE_WORD_PHYS		0x9d5ff000ULL
++#define TB371FC_STAGE_BACKUP_PHYS	0xb007f000ULL
++
++static void __iomem *tb371fc_fb_marker_base;
++static void __iomem *tb371fc_stage_word_base;
++static void __iomem *tb371fc_stage_backup_base;
++static unsigned long tb371fc_fb_marker_rows = TB371FC_FB_WIDE_ROWS;
++
++void __init __no_sanitize_address
++tb371fc_start_kernel_fb_marker(u32 color, u32 stage)
++{
++	volatile u32 *pixel = tb371fc_fb_marker_base ?
++		(volatile u32 *)tb371fc_fb_marker_base :
++		(volatile u32 *)(unsigned long)TB371FC_FB_MARKER_PHYS;
++	volatile u32 *stage_word = tb371fc_stage_word_base ?
++		(volatile u32 *)tb371fc_stage_word_base :
++		(volatile u32 *)(unsigned long)TB371FC_STAGE_WORD_PHYS;
++	volatile u32 *stage_backup = tb371fc_stage_backup_base ?
++		(volatile u32 *)tb371fc_stage_backup_base :
++		(volatile u32 *)(unsigned long)TB371FC_STAGE_BACKUP_PHYS;
++	unsigned long remaining = TB371FC_FB_STRIDE_PIXELS *
++				  tb371fc_fb_marker_rows;
++
++	while (remaining--)
++		*pixel++ = color;
++
++	stage_word[0] = 0x54423337;
++	stage_word[1] = stage;
++	stage_word[2] = ~stage;
++	stage_backup[0] = 0x54423337;
++	stage_backup[1] = stage;
++	stage_backup[2] = ~stage;
++	asm volatile("dsb sy" ::: "memory");
++}
++
++void __init __no_sanitize_address
++tb371fc_diag_write_region(u32 index, u64 start, u64 end)
++{
++	volatile u32 *stage_word = tb371fc_stage_word_base ?
++		(volatile u32 *)tb371fc_stage_word_base :
++		(volatile u32 *)(unsigned long)TB371FC_STAGE_WORD_PHYS;
++	volatile u32 *stage_backup = tb371fc_stage_backup_base ?
++		(volatile u32 *)tb371fc_stage_backup_base :
++		(volatile u32 *)(unsigned long)TB371FC_STAGE_BACKUP_PHYS;
++	u32 magic = 0x4d454d31; /* 'MEM1' */
++	u32 words[6];
++	int i;
++
++	words[0] = magic;
++	words[1] = index;
++	words[2] = (u32)(start & 0xffffffffUL);
++	words[3] = (u32)(start >> 32);
++	words[4] = (u32)(end & 0xffffffffUL);
++	words[5] = (u32)(end >> 32);
++	for (i = 0; i < 6; i++) {
++		stage_word[16 + i] = words[i];
++		stage_backup[16 + i] = words[i];
++	}
++	asm volatile("dsb sy" ::: "memory");
++}
++
++void __init __no_sanitize_address
++tb371fc_diag_write_barcode(u64 start)
++{
++	volatile u32 *fb = tb371fc_fb_marker_base ?
++		(volatile u32 *)tb371fc_fb_marker_base :
++		(volatile u32 *)(unsigned long)TB371FC_FB_MARKER_PHYS;
++	unsigned long rows = tb371fc_fb_marker_rows;
++	unsigned long stride = TB371FC_FB_STRIDE_PIXELS;
++	unsigned long seg = stride / 8;
++	unsigned long total = stride * rows;
++	volatile u32 *p;
++	int nibble, r;
++	unsigned long c;
++
++	p = fb;
++	while (total--)
++		*p++ = 0xff000000u;
++
++	for (nibble = 0; nibble < 8; nibble++) {
++		u32 val = (u32)((start >> ((7 - nibble) * 4)) & 0xf);
++		unsigned long col_start = (unsigned long)nibble * seg;
++		unsigned long bar_h = val + 1;
++
++		for (r = 0; r < (int)bar_h; r++) {
++			unsigned long row = rows - 1 - (unsigned long)r;
++
++			for (c = 0; c < seg; c++)
++				fb[row * stride + col_start + c] = 0xffffffffu;
++		}
++	}
++	asm volatile("dsb sy" ::: "memory");
++}
++
++static void __init tb371fc_map_fixmap_diagnostics(void)
++{
++	void __iomem *fb;
++	void __iomem *stage;
++	void __iomem *backup;
++
++	fb = early_ioremap(TB371FC_FB_MARKER_PHYS,
++			   TB371FC_FB_FIXMAP_SIZE);
++	stage = early_ioremap(TB371FC_STAGE_WORD_PHYS, PAGE_SIZE);
++	backup = early_ioremap(TB371FC_STAGE_BACKUP_PHYS, PAGE_SIZE);
++	if (fb) {
++		tb371fc_fb_marker_base = fb;
++		tb371fc_fb_marker_rows = TB371FC_FB_FIXMAP_ROWS;
++	}
++	if (stage)
++		tb371fc_stage_word_base = stage;
++	if (backup)
++		tb371fc_stage_backup_base = backup;
++}
++#endif
++
+ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ {
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++	tb371fc_start_kernel_fb_marker(0xff80ff00, 21);
++#endif
+ 	setup_initial_init_mm(_text, _etext, _edata, _end);
+ 
+ 	*cmdline_p = boot_command_line;
+@@ -289,8 +415,15 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 
+ 	early_fixmap_init();
+ 	early_ioremap_init();
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++	tb371fc_map_fixmap_diagnostics();
++	tb371fc_start_kernel_fb_marker(0xff00ffff, 22);
++#endif
+ 
+ 	setup_machine_fdt(__fdt_pointer);
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++	tb371fc_start_kernel_fb_marker(0xffffff00, 23);
++#endif
+ 
+ 	/*
+ 	 * Initialise the static keys early as they may be enabled by the
+@@ -300,6 +433,9 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 	parse_early_param();
+ 
+ 	dynamic_scs_init();
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++	tb371fc_start_kernel_fb_marker(0xffff00ff, 24);
++#endif
+ 
+ 	/*
+ 	 * The primary CPU enters the kernel with all DAIF exceptions masked.
+@@ -313,15 +449,24 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 	 * detected and initialized.
+ 	 */
+ 	local_daif_restore(DAIF_PROCCTX_NOIRQ);
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++	tb371fc_start_kernel_fb_marker(0xffff80c0, 25);
++#endif
+ 
+ 	/*
+ 	 * TTBR0 is only used for the identity mapping at this stage. Make it
+ 	 * point to zero page to avoid speculatively fetching new entries.
+ 	 */
+ 	cpu_uninstall_idmap();
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++	tb371fc_start_kernel_fb_marker(0xff40ff40, 26);
++#endif
+ 
+ 	xen_early_init();
+ 	efi_init();
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++	tb371fc_start_kernel_fb_marker(0xff0080ff, 27);
++#endif
+ 
+ 	if (!efi_enabled(EFI_BOOT)) {
+ 		if ((u64)_text % MIN_KIMG_ALIGN)
+@@ -331,8 +476,27 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
+ 	}
+ 
+ 	arm64_memblock_init();
++#ifdef CONFIG_TB371FC_POST_MMU_RESET_CHECKPOINT
++	/* r68: arm64_memblock_init() returned. Keep this before paging_init()
++	 * to isolate the next substantial setup_arch() block. */
++	asm volatile(
++		"mov x1, xzr\n"
++		"mov x2, xzr\n"
++		"mov x3, xzr\n"
++		"mov x0, #0x09\n"
++		"movk x0, #0x8400, lsl #16\n"
++		"nop\n"
++		::: "x0", "x1", "x2", "x3", "memory");
++#endif
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++	tb371fc_start_kernel_fb_marker(0xffff8000, 28);
++	tb371fc_start_kernel_fb_marker(0xffffff00, 29);
++#endif
+ 
+ 	paging_init();
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++	tb371fc_start_kernel_fb_marker(0xff8000ff, 30);
++#endif
+ 
+ 	acpi_table_upgrade();
+ 
+diff --git a/arch/arm64/mm/mmu.c b/arch/arm64/mm/mmu.c
+index c29d16284..bac0ca582 100644
+--- a/arch/arm64/mm/mmu.c
++++ b/arch/arm64/mm/mmu.c
+@@ -107,16 +107,23 @@ pgprot_t phys_mem_access_prot(struct file *file, unsigned long pfn,
+ }
+ EXPORT_SYMBOL(phys_mem_access_prot);
+ 
++#define TB371FC_EARLY_PGTABLE_POOL_PAGES 256
++
++static u8 tb371fc_early_pgtable_pool
++	[TB371FC_EARLY_PGTABLE_POOL_PAGES * PAGE_SIZE] __aligned(PAGE_SIZE);
++static unsigned int tb371fc_early_pgtable_pool_used;
++
+ static phys_addr_t __init early_pgtable_alloc(int shift)
+ {
+-	phys_addr_t phys;
++	void *page;
+ 
+-	phys = memblock_phys_alloc_range(PAGE_SIZE, PAGE_SIZE, 0,
+-					 MEMBLOCK_ALLOC_NOLEAKTRACE);
+-	if (!phys)
+-		panic("Failed to allocate page table page\n");
++	if (tb371fc_early_pgtable_pool_used >=
++	    TB371FC_EARLY_PGTABLE_POOL_PAGES)
++		panic("TB371FC embedded early page-table pool exhausted\n");
+ 
+-	return phys;
++	page = tb371fc_early_pgtable_pool +
++	       tb371fc_early_pgtable_pool_used++ * PAGE_SIZE;
++	return __pa_symbol(page);
+ }
+ 
+ bool pgattr_change_is_safe(u64 old, u64 new)
+@@ -656,10 +663,20 @@ static void __init map_mem(pgd_t *pgdp)
+ 	 */
+ 	memblock_mark_nomap(kernel_start, kernel_end - kernel_start);
+ 
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++	extern void tb371fc_diag_write_region(u32 index, u64 start, u64 end);
++	extern void tb371fc_start_kernel_fb_marker(u32 color, u32 stage);
++	extern void tb371fc_diag_write_barcode(u64 start);
++	u32 tb371fc_diag_idx = 0;
++#endif
+ 	/* map all the memory banks */
+ 	for_each_mem_range(i, &start, &end) {
+ 		if (start >= end)
+ 			break;
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++		tb371fc_diag_write_region(tb371fc_diag_idx++, start, end);
++		tb371fc_diag_write_barcode(start);
++#endif
+ 		/*
+ 		 * The linear map must allow allocation tags reading/writing
+ 		 * if MTE is present. Otherwise, it has the same attributes as
+diff --git a/drivers/clk/qcom/gcc-sm8250.c b/drivers/clk/qcom/gcc-sm8250.c
+index 1c59d70e0..3175182e0 100644
+--- a/drivers/clk/qcom/gcc-sm8250.c
++++ b/drivers/clk/qcom/gcc-sm8250.c
+@@ -707,6 +707,7 @@ static const struct freq_tbl ftbl_gcc_sdcc2_apps_clk_src[] = {
+ 	F(25000000, P_GPLL0_OUT_EVEN, 12, 0, 0),
+ 	F(50000000, P_GPLL0_OUT_EVEN, 6, 0, 0),
+ 	F(100000000, P_GPLL0_OUT_MAIN, 6, 0, 0),
++	F(150000000, P_GPLL0_OUT_MAIN, 4, 0, 0),
+ 	F(202000000, P_GPLL9_OUT_MAIN, 4, 0, 0),
+ 	{ }
+ };
+diff --git a/drivers/gpu/drm/msm/adreno/adreno_device.c b/drivers/gpu/drm/msm/adreno/adreno_device.c
+index cfc74a9e2..828d5fda3 100644
+--- a/drivers/gpu/drm/msm/adreno/adreno_device.c
++++ b/drivers/gpu/drm/msm/adreno/adreno_device.c
+@@ -264,7 +264,13 @@ static int adreno_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		return ret;
+ 
+-	if (of_device_is_compatible(pdev->dev.of_node, "amd,imageon"))
++	/*
++	 * TB371FC: the native display (MDSS/DPU, dual-DSI NT36532) is not supported yet; the
++	 * screen is driven by simpledrm. "tb371fc,headless-gpu" binds the Adreno 650 on its own
++	 * (render node only), like the imageon case.
++	 */
++	if (of_device_is_compatible(pdev->dev.of_node, "amd,imageon") ||
++	    of_property_read_bool(pdev->dev.of_node, "tb371fc,headless-gpu"))
+ 		adreno_device_register_headless();
+ 
+ 	return 0;
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_0_sm8250.h b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_0_sm8250.h
+index e8916ae82..712284a52 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_0_sm8250.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/catalog/dpu_6_0_sm8250.h
+@@ -14,7 +14,7 @@ static const struct dpu_caps sm8250_dpu_caps = {
+ 	.has_dim_layer = true,
+ 	.has_idle_pc = true,
+ 	.has_3d_merge = true,
+-	.max_linewidth = 4096,
++	.max_linewidth = DEFAULT_DPU_OUTPUT_LINE_WIDTH,
+ 	.pixel_ram_size = DEFAULT_PIXEL_RAM_SIZE,
+ };
+ 
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+index 170d60bb7..214d171d5 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+@@ -618,7 +618,7 @@ static struct msm_display_topology dpu_encoder_get_topology(
+ 		 */
+ 		topology.num_dsc = 2;
+ 		topology.num_lm = 2;
+-		topology.num_intf = 1;
++		topology.num_intf = intf_count;
+ 	}
+ 
+ 	return topology;
+@@ -1189,6 +1189,7 @@ static void dpu_encoder_virt_atomic_mode_set(struct drm_encoder *drm_enc,
+ 
+ 	for (i = 0; i < dpu_enc->num_phys_encs; i++) {
+ 		struct dpu_encoder_phys *phys = dpu_enc->phys_encs[i];
++		int ctl_idx = (i < num_ctl) ? i : (num_ctl - 1);
+ 
+ 		phys->hw_pp = dpu_enc->hw_pp[i];
+ 		if (!phys->hw_pp) {
+@@ -1197,7 +1198,7 @@ static void dpu_encoder_virt_atomic_mode_set(struct drm_encoder *drm_enc,
+ 			return;
+ 		}
+ 
+-		phys->hw_ctl = i < num_ctl ? to_dpu_hw_ctl(hw_ctl[i]) : NULL;
++		phys->hw_ctl = num_ctl ? to_dpu_hw_ctl(hw_ctl[ctl_idx]) : NULL;
+ 		if (!phys->hw_ctl) {
+ 			DPU_ERROR_ENC(dpu_enc,
+ 				"no ctl block assigned at idx: %d\n", i);
+@@ -1924,9 +1925,14 @@ static void dpu_encoder_prep_dsc(struct dpu_encoder_virt *dpu_enc,
+ 	enc_ip_w = intf_ip_w / 2;
+ 	initial_lines = dpu_encoder_dsc_initial_line_calc(dsc, enc_ip_w);
+ 
+-	for (i = 0; i < MAX_CHANNELS_PER_ENC; i++)
+-		dpu_encoder_dsc_pipe_cfg(ctl, hw_dsc[i], hw_pp[i],
++	for (i = 0; i < MAX_CHANNELS_PER_ENC; i++) {
++		struct dpu_hw_ctl *phys_ctl =
++			(i < dpu_enc->num_phys_encs && dpu_enc->phys_encs[i]) ?
++			dpu_enc->phys_encs[i]->hw_ctl : ctl;
++
++		dpu_encoder_dsc_pipe_cfg(phys_ctl, hw_dsc[i], hw_pp[i],
+ 					 dsc, dsc_common_mode, initial_lines);
++	}
+ }
+ 
+ void dpu_encoder_prepare_for_kickoff(struct drm_encoder *drm_enc)
+@@ -2076,11 +2082,15 @@ static void dpu_encoder_unprep_dsc(struct dpu_encoder_virt *dpu_enc)
+ 	int i;
+ 
+ 	for (i = 0; i < MAX_CHANNELS_PER_ENC; i++) {
++		struct dpu_hw_ctl *phys_ctl =
++			(i < dpu_enc->num_phys_encs && dpu_enc->phys_encs[i]) ?
++			dpu_enc->phys_encs[i]->hw_ctl : ctl;
++
+ 		hw_pp[i] = dpu_enc->hw_pp[i];
+ 		hw_dsc[i] = dpu_enc->hw_dsc[i];
+ 
+ 		if (hw_pp[i] && hw_dsc[i])
+-			dpu_encoder_dsc_pipe_clr(ctl, hw_dsc[i], hw_pp[i]);
++			dpu_encoder_dsc_pipe_clr(phys_ctl, hw_dsc[i], hw_pp[i]);
+ 	}
+ }
+ 
+@@ -2154,8 +2164,11 @@ void dpu_encoder_helper_phys_cleanup(struct dpu_encoder_phys *phys_enc)
+ 	intf_cfg.mode_3d = dpu_encoder_helper_get_3d_blend_mode(phys_enc);
+ 	intf_cfg.dsc = dpu_encoder_helper_get_dsc(phys_enc);
+ 
+-	if (phys_enc->hw_intf)
++	if (phys_enc->hw_intf) {
+ 		intf_cfg.intf = phys_enc->hw_intf->idx;
++		if (phys_enc->split_role == ENC_ROLE_MASTER)
++			intf_cfg.intf_master = phys_enc->hw_intf->idx;
++	}
+ 	if (phys_enc->hw_wb)
+ 		intf_cfg.wb = phys_enc->hw_wb->idx;
+ 
+@@ -2618,6 +2631,14 @@ unsigned int dpu_encoder_helper_get_dsc(struct dpu_encoder_phys *phys_enc)
+ {
+ 	struct drm_encoder *encoder = phys_enc->parent;
+ 	struct dpu_encoder_virt *dpu_enc = to_dpu_encoder_virt(encoder);
++	int i;
++
++	if (dpu_enc->num_phys_encs > 1) {
++		for (i = 0; i < dpu_enc->num_phys_encs; i++) {
++			if (dpu_enc->phys_encs[i] == phys_enc && dpu_enc->hw_dsc[i])
++				return BIT(dpu_enc->hw_dsc[i]->idx - DSC_0);
++		}
++	}
+ 
+ 	return dpu_enc->dsc_mask;
+ }
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
+index b7699ca89..08487ce13 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
+@@ -133,8 +133,8 @@ static void drm_mode_to_intf_timing_params(
+ 		 * TODO: replace drm_dsc_get_bpp_int with logic to handle
+ 		 * fractional part if there is fraction
+ 		 */
+-		timing->width = timing->width * drm_dsc_get_bpp_int(dsc) /
+-				(dsc->bits_per_component * 3);
++		timing->width = DIV_ROUND_UP(timing->width * drm_dsc_get_bpp_int(dsc),
++					     dsc->bits_per_component * 3);
+ 		timing->xres = timing->width;
+ 	}
+ }
+@@ -302,6 +302,8 @@ static void dpu_encoder_phys_vid_setup_timing_engine(
+ 	if (phys_enc->hw_cdm)
+ 		intf_cfg.cdm = phys_enc->hw_cdm->idx;
+ 	intf_cfg.intf = phys_enc->hw_intf->idx;
++	if (phys_enc->split_role == ENC_ROLE_MASTER)
++		intf_cfg.intf_master = phys_enc->hw_intf->idx;
+ 	intf_cfg.intf_mode_sel = DPU_CTL_MODE_SEL_VID;
+ 	intf_cfg.stream_sel = 0; /* Don't care value for video mode */
+ 	intf_cfg.mode_3d = dpu_encoder_helper_get_3d_blend_mode(phys_enc);
+@@ -463,12 +465,15 @@ static void dpu_encoder_phys_vid_enable(struct dpu_encoder_phys *phys_enc)
+ 	dpu_encoder_phys_vid_setup_timing_engine(phys_enc);
+ 
+ 	/*
++	 * For cases where both the interfaces are connected to same ctl,
++	 * set the flush bit for both master and slave.
+ 	 * For single flush cases (dual-ctl or pp-split), skip setting the
+ 	 * flush bit for the slave intf, since both intfs use same ctl
+ 	 * and HW will only flush the master.
+ 	 */
+-	if (dpu_encoder_phys_vid_needs_single_flush(phys_enc) &&
+-		!dpu_encoder_phys_vid_is_master(phys_enc))
++	if (!test_bit(DPU_CTL_ACTIVE_CFG, &ctl->caps->features) &&
++	    dpu_encoder_phys_vid_needs_single_flush(phys_enc) &&
++	    !dpu_encoder_phys_vid_is_master(phys_enc))
+ 		goto skip_flush;
+ 
+ 	ctl->ops.update_pending_flush_intf(ctl, phys_enc->hw_intf->idx);
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c
+index b07d09171..51a1ad8c7 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.c
+@@ -584,6 +584,9 @@ static void dpu_hw_ctl_intf_cfg_v1(struct dpu_hw_ctl *ctx,
+ 
+ 	if (cfg->cdm)
+ 		DPU_REG_WRITE(c, CTL_CDM_ACTIVE, cfg->cdm);
++
++	if (cfg->intf_master)
++		DPU_REG_WRITE(c, CTL_INTF_MASTER, BIT(cfg->intf_master - INTF_0));
+ }
+ 
+ static void dpu_hw_ctl_intf_cfg(struct dpu_hw_ctl *ctx,
+@@ -669,6 +672,9 @@ static void dpu_hw_ctl_reset_intf_cfg_v1(struct dpu_hw_ctl *ctx,
+ 		cdm_active &= ~cfg->cdm;
+ 		DPU_REG_WRITE(c, CTL_CDM_ACTIVE, cdm_active);
+ 	}
++
++	if (cfg->intf_master)
++		DPU_REG_WRITE(c, CTL_INTF_MASTER, 0);
+ }
+ 
+ static void dpu_hw_ctl_set_fetch_pipe_active(struct dpu_hw_ctl *ctx,
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.h b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.h
+index 4401fdc0f..2a4135d5f 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.h
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_ctl.h
+@@ -45,6 +45,7 @@ struct dpu_hw_stage_cfg {
+  */
+ struct dpu_hw_intf_cfg {
+ 	enum dpu_intf intf;
++	enum dpu_intf intf_master;
+ 	enum dpu_wb wb;
+ 	enum dpu_3d_blend_mode mode_3d;
+ 	enum dpu_merge_3d merge_3d;
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
+index 44938ba7a..8595ed4ff 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_rm.c
+@@ -390,6 +390,9 @@ static int _dpu_rm_reserve_ctls(
+ 		if (needs_split_display != has_split_display)
+ 			continue;
+ 
++		if (features & BIT(DPU_CTL_ACTIVE_CFG))
++			num_ctls = 1;
++
+ 		ctl_idx[i] = j;
+ 		DPU_DEBUG("ctl %d match\n", j + CTL_0);
+ 
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_host.c b/drivers/gpu/drm/msm/dsi/dsi_host.c
+index cd605c75c..64dae457d 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -893,7 +893,7 @@ static void dsi_update_dsc_timing(struct msm_dsi_host *msm_host, bool is_cmd_mod
+ 	slice_per_intf = dsc->slice_count;
+ 
+ 	total_bytes_per_intf = dsc->slice_chunk_size * slice_per_intf;
+-	bytes_per_pkt = dsc->slice_chunk_size; /* * slice_per_pkt; */
++	bytes_per_pkt = dsc->slice_chunk_size * slice_per_intf;
+ 
+ 	eol_byte_num = total_bytes_per_intf % 3;
+ 
+@@ -903,7 +903,7 @@ static void dsi_update_dsc_timing(struct msm_dsi_host *msm_host, bool is_cmd_mod
+ 	 * Since the current driver only supports slice_per_pkt = 1,
+ 	 * pkt_per_line will be equal to slice per intf for now.
+ 	 */
+-	pkt_per_line = slice_per_intf;
++	pkt_per_line = 1;
+ 
+ 	if (is_cmd_mode) /* packet data type */
+ 		reg = DSI_COMMAND_COMPRESSION_MODE_CTRL_STREAM0_DATATYPE(MIPI_DSI_DCS_LONG_WRITE);
+@@ -1064,7 +1064,7 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
+ 			 * TODO: Expand mipi_dsi_device struct to hold slice_per_pkt info
+ 			 *       and adjust DSC math to account for slice_per_pkt.
+ 			 */
+-			wc = msm_host->dsc->slice_chunk_size + 1;
++			wc = msm_host->dsc->slice_chunk_size * msm_host->dsc->slice_count + 1;
+ 
+ 		dsi_write(msm_host, REG_DSI_CMD_MDP_STREAM0_CTRL,
+ 			DSI_CMD_MDP_STREAM0_CTRL_WORD_COUNT(wc) |
+diff --git a/drivers/gpu/drm/msm/msm_drv.c b/drivers/gpu/drm/msm/msm_drv.c
+index d924c0f28..20d72ed3b 100644
+--- a/drivers/gpu/drm/msm/msm_drv.c
++++ b/drivers/gpu/drm/msm/msm_drv.c
+@@ -116,10 +116,14 @@ bool msm_use_mmu(struct drm_device *dev)
+ 	 * a2xx comes with its own MMU
+ 	 * On other platforms IOMMU can be declared specified either for the
+ 	 * MDP/DPU device or for its parent, MDSS device.
++	 * TB371FC headless Adreno (no MDSS): buffers are mapped by the GPU's own SMMU, so no VRAM
++	 * carveout is needed.
+ 	 */
+ 	return priv->is_a2xx ||
+ 		device_iommu_mapped(dev->dev) ||
+-		device_iommu_mapped(dev->dev->parent);
++		device_iommu_mapped(dev->dev->parent) ||
++		(!dev->dev->of_node &&
++		 of_find_node_with_property(NULL, "tb371fc,headless-gpu"));
+ }
+ 
+ static int msm_init_vram(struct drm_device *dev)
+diff --git a/drivers/mmc/host/sdhci-msm.c b/drivers/mmc/host/sdhci-msm.c
+index 0589bbbc0..c0af7bed7 100644
+--- a/drivers/mmc/host/sdhci-msm.c
++++ b/drivers/mmc/host/sdhci-msm.c
+@@ -7,6 +7,7 @@
+ 
+ #include <linux/module.h>
+ #include <linux/delay.h>
++#include <linux/gpio/consumer.h>
+ #include <linux/mmc/mmc.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/pm_opp.h>
+@@ -271,6 +272,7 @@ struct sdhci_msm_host {
+ 	void __iomem *core_mem;	/* MSM SDCC mapped address */
+ 	int pwr_irq;		/* power irq */
+ 	struct clk *bus_clk;	/* SDHC bus voter clock */
++	struct gpio_desc *redriver_power_gpio;
+ 	struct clk *xo_clk;	/* TCXO clk needed for FLL feature of cm_dll*/
+ 	/* core, iface, cal and sleep clocks */
+ 	struct clk_bulk_data bulk_clks[4];
+@@ -1721,18 +1723,28 @@ static void sdhci_msm_handle_pwr_irq(struct sdhci_host *host, int irq)
+ 	}
+ 
+ 	if (pwr_state) {
++		bool bus_on = pwr_state & REQ_BUS_ON;
++
++		if (msm_host->redriver_power_gpio)
++			gpiod_set_value_cansleep(msm_host->redriver_power_gpio,
++						 bus_on);
++
+ 		ret = sdhci_msm_set_vmmc(msm_host, mmc,
+-					 pwr_state & REQ_BUS_ON);
++					 bus_on);
+ 		if (!ret)
+ 			ret = sdhci_msm_set_vqmmc(msm_host, mmc,
+-					pwr_state & REQ_BUS_ON);
++					bus_on);
+ 		if (!ret)
+ 			ret = sdhci_msm_set_pincfg(msm_host,
+-					pwr_state & REQ_BUS_ON);
++					bus_on);
+ 		if (!ret)
+ 			irq_ack |= CORE_PWRCTL_BUS_SUCCESS;
+-		else
++		else {
+ 			irq_ack |= CORE_PWRCTL_BUS_FAIL;
++			if (bus_on && msm_host->redriver_power_gpio)
++				gpiod_set_value_cansleep(
++					msm_host->redriver_power_gpio, 0);
++		}
+ 	}
+ 
+ 	/* Handle IO LOW/HIGH */
+@@ -2502,6 +2514,14 @@ static int sdhci_msm_probe(struct platform_device *pdev)
+ 	msm_host = sdhci_pltfm_priv(pltfm_host);
+ 	msm_host->mmc = host->mmc;
+ 	msm_host->pdev = pdev;
++	msm_host->redriver_power_gpio = devm_gpiod_get_optional(&pdev->dev,
++					"redriver-power", GPIOD_OUT_LOW);
++	if (IS_ERR(msm_host->redriver_power_gpio)) {
++		ret = dev_err_probe(&pdev->dev,
++				PTR_ERR(msm_host->redriver_power_gpio),
++				"failed to get redriver power GPIO\n");
++		goto pltfm_free;
++	}
+ 
+ 	ret = mmc_of_parse(host->mmc);
+ 	if (ret)
+@@ -2617,6 +2637,19 @@ static int sdhci_msm_probe(struct platform_device *pdev)
+ 	writel_relaxed(CORE_VENDOR_SPEC_POR_VAL,
+ 			host->ioaddr + msm_offset->core_vendor_spec);
+ 
++	/*
++	 * TB371FC: the microSD IO rail is left at 1.8 V by the vendor kernel (SDR104) that kexecs
++	 * into this one, and there is no vqmmc regulator control here. Put the IO pads into 1.8 V
++	 * mode before the first card access; in 3.0 V mode host-driven transfers fail.
++	 */
++	if (of_property_read_bool(pdev->dev.of_node, "tb371fc,io-pads-1v8")) {
++		config = readl_relaxed(host->ioaddr + msm_offset->core_vendor_spec);
++		config |= CORE_IO_PAD_PWR_SWITCH_EN | CORE_IO_PAD_PWR_SWITCH;
++		writel_relaxed(config, host->ioaddr + msm_offset->core_vendor_spec);
++		dev_info(&pdev->dev, "TB371FC: IO pads in 1.8 V mode (vendor_spec %08x)\n",
++			 readl_relaxed(host->ioaddr + msm_offset->core_vendor_spec));
++	}
++
+ 	if (!msm_host->mci_removed) {
+ 		/* Set HC_MODE_EN bit in HC_MODE register */
+ 		msm_host_writel(msm_host, HC_MODE_EN, host,
+diff --git a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+index 535dffd3d..038f37caa 100644
+--- a/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
++++ b/drivers/phy/qualcomm/phy-qcom-qmp-combo.c
+@@ -1269,8 +1269,8 @@ static const struct qmp_phy_init_tbl qmp_v4_dp_tx_tbl[] = {
+ 	QMP_PHY_INIT_CFG(QSERDES_V4_TX_RES_CODE_LANE_OFFSET_RX, 0x11),
+ 	QMP_PHY_INIT_CFG(QSERDES_V4_TX_TX_BAND, 0x4),
+ 	QMP_PHY_INIT_CFG(QSERDES_V4_TX_TX_POL_INV, 0x0a),
+-	QMP_PHY_INIT_CFG(QSERDES_V4_TX_TX_DRV_LVL, 0x2a),
+-	QMP_PHY_INIT_CFG(QSERDES_V4_TX_TX_EMP_POST1_LVL, 0x20),
++	QMP_PHY_INIT_CFG(QSERDES_V4_TX_TX_DRV_LVL, 0x3f),       /* Ported from 4.19 */
++	QMP_PHY_INIT_CFG(QSERDES_V4_TX_TX_EMP_POST1_LVL, 0x37), /* Ported from 4.19 */
+ };
+ 
+ static const struct qmp_phy_init_tbl qmp_v5_dp_serdes_tbl[] = {
+diff --git a/init/main.c b/init/main.c
+index 34bb284f6..8b68564d9 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -870,18 +870,31 @@ static void __init early_numa_node_init(void)
+ #endif
+ }
+ 
++#ifdef CONFIG_TB371FC_LATE_FB_MARKER
++extern void __init tb371fc_start_kernel_fb_marker(u32 color, u32 stage);
++#define TB371FC_START_MARKER(color, stage) \
++	tb371fc_start_kernel_fb_marker((color), (stage))
++#else
++#define TB371FC_START_MARKER(color, stage) do { } while (0)
++#endif
++
+ asmlinkage __visible __init __no_sanitize_address __noreturn __no_stack_protector
+ void start_kernel(void)
+ {
+ 	char *command_line;
+ 	char *after_dashes;
+ 
++	TB371FC_START_MARKER(0xff800000, 14);
+ 	set_task_stack_end_magic(&init_task);
++	TB371FC_START_MARKER(0xff008000, 15);
+ 	smp_setup_processor_id();
++	TB371FC_START_MARKER(0xff000080, 16);
+ 	debug_objects_early_init();
+ 	init_vmlinux_build_id();
++	TB371FC_START_MARKER(0xffffa500, 17);
+ 
+ 	cgroup_init_early();
++	TB371FC_START_MARKER(0xff800080, 18);
+ 
+ 	local_irq_disable();
+ 	early_boot_irqs_disabled = true;
+@@ -892,7 +905,9 @@ void start_kernel(void)
+ 	 */
+ 	boot_cpu_init();
+ 	page_address_init();
++	TB371FC_START_MARKER(0xff808080, 19);
+ 	pr_notice("%s", linux_banner);
++	TB371FC_START_MARKER(0xfff5f5f5, 20);
+ 	setup_arch(&command_line);
+ 	/* Static keys and static calls are needed by LSMs */
+ 	jump_label_init();
+diff --git a/net/socket.c b/net/socket.c
+index 723bc3a1b..1d539033c 100644
+--- a/net/socket.c
++++ b/net/socket.c
+@@ -59,6 +59,7 @@
+ #include <linux/file.h>
+ #include <linux/splice.h>
+ #include <linux/net.h>
++#include <linux/uio.h>
+ #include <linux/interrupt.h>
+ #include <linux/thread_info.h>
+ #include <linux/rcupdate.h>
+@@ -2362,6 +2363,28 @@ int do_sock_getsockopt(struct socket *sock, bool compat, int level,
+ 	ops = READ_ONCE(sock->ops);
+ 	if (level == SOL_SOCKET) {
+ 		err = sk_getsockopt(sock->sk, level, optname, optval, optlen);
++	} else if (ops->getsockopt_iter && !ops->getsockopt) {
++		/* TB371FC: 6.12.114 L2CAP only provides getsockopt_iter */
++		sockopt_t sopt = {};
++		int len;
++
++		if (optval.is_kernel || optlen.is_kernel)
++			return -EOPNOTSUPP;
++		if (copy_from_sockptr(&len, optlen, sizeof(int)))
++			return -EFAULT;
++		if (len < 0)
++			return -EINVAL;
++		iov_iter_ubuf(&sopt.iter_out, ITER_DEST, optval.user, len);
++		iov_iter_ubuf(&sopt.iter_in, ITER_SOURCE, optval.user, len);
++		sopt.optlen = len;
++		err = ops->getsockopt_iter(sock, level, optname, &sopt);
++		if (!err) {
++			int out = sopt.optlen != len ? sopt.optlen :
++				  len - (int)iov_iter_count(&sopt.iter_out);
++
++			if (copy_to_sockptr(optlen, &out, sizeof(int)))
++				err = -EFAULT;
++		}
+ 	} else if (unlikely(!ops->getsockopt)) {
+ 		err = -EOPNOTSUPP;
+ 	} else {
